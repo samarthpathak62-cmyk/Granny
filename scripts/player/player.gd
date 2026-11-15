@@ -20,11 +20,15 @@ const BASE_FOV = 80.0
 const FOV_CHANGE = 1.1
 
 # noise variables for enemy AI hearing
-const SPRINT_NOISE_INTERVAL = 0.45
-const SPRINT_NOISE_RADIUS = 14.0
-const DROP_NOISE_RADIUS = 12.0
+const WALK_NOISE_INTERVAL = 0.65
+const WALK_NOISE_RADIUS = 5.5
+const SPRINT_NOISE_INTERVAL = 0.42
+const SPRINT_NOISE_RADIUS = 15.0
+const DROP_NOISE_RADIUS = 13.0
 const INTERACT_NOISE_RADIUS = 10.0
+const UNLOCK_NOISE_RADIUS = 16.0
 var sprint_noise_timer = 0.0
+var walk_noise_timer = 0.0
 
 # buttons
 @onready var rc_bt = $head/Camera3D/red_circle_bt
@@ -123,8 +127,13 @@ func _can_interact_collider(col: Object) -> bool:
 	return col.has_method("interact")
 
 
-func _emit_noise(radius: float) -> void:
-	get_tree().call_group("enemy", "hear_noise", global_position, radius)
+func _emit_noise(radius: float, priority: float = 1.0) -> void:
+	get_tree().call_group("enemy", "hear_noise", global_position, radius, priority)
+
+
+func _notify_enemy_progress(amount: float = 0.14) -> void:
+	get_tree().call_group("enemy", "notify_player_progress", amount)
+	get_tree().call_group("enemy", "notify_world_changed")
 
 
 func _show_hint(msg: String, duration: float = 2.0) -> void:
@@ -233,7 +242,8 @@ func _process(delta):
 				if picked and is_instance_valid(detected) and detected.name == req_beat:
 					interact_col.interact()
 					interact_col.collision_layer = 1
-					_emit_noise(INTERACT_NOISE_RADIUS)
+					_emit_noise(UNLOCK_NOISE_RADIUS, 1.5)
+					_notify_enemy_progress(0.18)
 				else:
 					_show_hint("NEED a HAMMER to OPEN")
 			elif needs_pin:
@@ -303,15 +313,23 @@ func _physics_process(delta):
 		velocity.x = lerp(velocity.x, direction.x * speed, delta * 3.0)
 		velocity.z = lerp(velocity.z, direction.z * speed, delta * 3.0)
 
-	# Sprint footstep noise alerts nearby enemy
+	# Footstep noise alerts nearby enemy (crouching is completely silent)
 	var horiz_speed = Vector2(velocity.x, velocity.z).length()
 	if is_sprinting and is_on_floor() and horiz_speed > WALK_SPEED + 1.0:
+		walk_noise_timer = 0.0
 		sprint_noise_timer -= delta
 		if sprint_noise_timer <= 0.0:
 			sprint_noise_timer = SPRINT_NOISE_INTERVAL
-			_emit_noise(SPRINT_NOISE_RADIUS)
+			_emit_noise(SPRINT_NOISE_RADIUS, 1.25)
+	elif not crouched and is_on_floor() and horiz_speed > 1.5:
+		sprint_noise_timer = 0.0
+		walk_noise_timer -= delta
+		if walk_noise_timer <= 0.0:
+			walk_noise_timer = WALK_NOISE_INTERVAL
+			_emit_noise(WALK_NOISE_RADIUS, 0.7)
 	else:
 		sprint_noise_timer = 0.0
+		walk_noise_timer = 0.0
 
 	# Head bob (preserve camera base offset!)
 	t_bob += delta * velocity.length() * float(is_on_floor())
@@ -346,7 +364,8 @@ func _on_timer_timeout() -> void:
 			pending_unlock_target.set("pinreq", false)
 		elif pending_unlock_target is CollisionObject3D:
 			pending_unlock_target.collision_layer = 1
-		_emit_noise(INTERACT_NOISE_RADIUS)
+		_emit_noise(UNLOCK_NOISE_RADIUS, 1.4)
+		_notify_enemy_progress(0.16)
 	pending_unlock_target = null
 
 
