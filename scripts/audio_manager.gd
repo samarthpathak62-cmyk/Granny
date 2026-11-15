@@ -13,6 +13,7 @@ const SOUND_PATHS: Dictionary = {
 	"plank_break": "res://assets/sounds/plank_break.wav",
 	"clown_alert": "res://assets/sounds/clown_alert.wav",
 	"clown_jumpscare": "res://assets/sounds/clown_jumpscare.wav",
+	"clown_hum": "res://assets/sounds/clown_hum.wav",
 	"ui_click": "res://assets/sounds/ui_click.wav",
 	"victory": "res://assets/sounds/victory.wav",
 }

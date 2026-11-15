@@ -12,6 +12,12 @@ var transitioning_day: bool = false
 var player_spawn_transform: Transform3D
 var enemy_spawn_transform: Transform3D
 
+# PSX Retro Shader
+var psx_layer: CanvasLayer = null
+var psx_rect: ColorRect = null
+var psx_mat: ShaderMaterial = null
+var psx_enabled: bool = true
+
 # Granny HUD & Horror Overlay
 var hud_layer: CanvasLayer = null
 var vignette_rect: ColorRect = null
@@ -40,10 +46,13 @@ func _ready() -> void:
 
 	if player_node:
 		player_spawn_transform = player_node.global_transform
+		if player_node.has_method("play_wakeup_animation"):
+			player_node.play_wakeup_animation()
 	if enemy_node:
 		enemy_spawn_transform = enemy_node.global_transform
 
 	_enhance_horror_environment()
+	_build_psx_postprocess()
 	_build_granny_hud()
 	_show_day_intro(current_day, "Escape via the Main Door or Boat. Crouch [C] to stay silent!")
 
@@ -57,6 +66,68 @@ func _enhance_horror_environment() -> void:
 		env.fog_light_energy = 0.65
 		env.fog_density = 0.042
 		env.ambient_light_energy = 0.35
+
+
+func _build_psx_postprocess() -> void:
+	psx_layer = CanvasLayer.new()
+	psx_layer.layer = 1
+	add_child(psx_layer)
+
+	psx_rect = ColorRect.new()
+	psx_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	psx_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var psx_shader := Shader.new()
+	psx_shader.code = """
+shader_type canvas_item;
+
+uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_nearest;
+uniform vec2 target_resolution = vec2(480.0, 270.0);
+uniform float color_levels = 32.0;
+uniform float dither_strength = 0.75;
+uniform float scanline_strength = 0.08;
+uniform float terror_chroma = 0.0;
+
+float bayer4(vec2 p) {
+	int x = int(mod(p.x, 4.0));
+	int y = int(mod(p.y, 4.0));
+	int idx = x + y * 4;
+	float m[16] = float[16](
+		 0.0,  8.0,  2.0, 10.0,
+		12.0,  4.0, 14.0,  6.0,
+		 3.0, 11.0,  1.0,  9.0,
+		15.0,  7.0, 13.0,  5.0
+	);
+	return (m[idx] / 16.0) - 0.5;
+}
+
+void fragment() {
+	vec2 pixel_pos = floor(SCREEN_UV * target_resolution);
+	vec2 snapped_uv = (pixel_pos + 0.5) / target_resolution;
+
+	float chroma_off = (0.0006 + terror_chroma * 0.0028) * length(SCREEN_UV - 0.5);
+	float r = texture(screen_texture, snapped_uv + vec2(chroma_off, 0.0)).r;
+	float g = texture(screen_texture, snapped_uv).g;
+	float b = texture(screen_texture, snapped_uv - vec2(chroma_off, 0.0)).b;
+	vec3 col = vec3(r, g, b);
+
+	// 4x4 Bayer ordered dithering + 15-bit PS1 color quantization
+	float dither = bayer4(pixel_pos) * (dither_strength / color_levels);
+	col = floor((col + dither) * color_levels + 0.5) / color_levels;
+	col = clamp(col, vec3(0.0), vec3(1.0));
+
+	// Subtle CRT scanlines
+	float scan = 1.0 - scanline_strength * (0.5 + 0.5 * sin(pixel_pos.y * 3.14159265));
+	col *= scan;
+
+	COLOR = vec4(col, 1.0);
+}
+"""
+	psx_mat = ShaderMaterial.new()
+	psx_mat.shader = psx_shader
+	psx_rect.material = psx_mat
+	psx_rect.visible = psx_enabled
+	psx_layer.add_child(psx_rect)
 
 
 func _build_granny_hud() -> void:
@@ -122,12 +193,12 @@ void fragment() {
 	top_box.add_child(item_hud_label)
 
 	var controls_hint := Label.new()
-	controls_hint.text = "[WASD] Move  [Shift] Sprint  [C] Crouch/Hide  [F/G] Pick/Drop  [E] Interact  [T/RMB] Light"
+	controls_hint.text = "[WASD] Move  [Shift] Sprint  [C] Crouch/Hide  [F/G] Pick/Drop  [E] Interact  [T/RMB] Light  [F3] PSX"
 	controls_hint.add_theme_font_size_override("font_size", 14)
 	controls_hint.add_theme_color_override("font_color", Color(0.75, 0.75, 0.75, 0.72))
 	controls_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	controls_hint.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	controls_hint.offset_left = -740
+	controls_hint.offset_left = -840
 	controls_hint.offset_top = 20
 	controls_hint.offset_right = -24
 	controls_hint.offset_bottom = 48
@@ -183,6 +254,15 @@ void fragment() {
 	banner_box.add_child(day_sub_label)
 
 
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F3:
+		psx_enabled = !psx_enabled
+		if psx_rect:
+			psx_rect.visible = psx_enabled
+		if player_node and player_node.has_method("_show_hint"):
+			player_node._show_hint("PSX Shader: " + ("ON" if psx_enabled else "OFF"), 1.5)
+
+
 func trigger_blood_flash(strength: float = 0.8) -> void:
 	blood_flash_alpha = maxf(blood_flash_alpha, strength)
 
@@ -207,10 +287,14 @@ func _show_day_intro(day_num: int, subtitle: String) -> void:
 
 
 func _process(delta: float) -> void:
+	var chase_val: float = 0.0
+	if has_node("/root/AudioManager"):
+		chase_val = float(get_node("/root/AudioManager").chase_intensity)
+
+	if psx_mat and psx_enabled:
+		psx_mat.set_shader_parameter("terror_chroma", chase_val)
+
 	if vignette_mat:
-		var chase_val: float = 0.0
-		if has_node("/root/AudioManager"):
-			chase_val = float(get_node("/root/AudioManager").chase_intensity)
 		var pulse: float = 0.78 + 0.22 * sin(Time.get_ticks_msec() * 0.008 * (1.0 + chase_val * 1.8))
 		vignette_mat.set_shader_parameter("intensity", chase_val * pulse)
 		blood_flash_alpha = maxf(blood_flash_alpha - delta * 1.8, 0.0)

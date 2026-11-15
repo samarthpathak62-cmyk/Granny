@@ -82,6 +82,7 @@ var hint_timer := 0.0
 var is_hidden: bool = false
 var trapped_timer: float = 0.0
 var camera_shake: float = 0.0
+var wakeup_timer: float = 0.0
 var jumpscare_target_pos: Vector3 = Vector3.ZERO
 var jumpscare_lock_active: bool = false
 var wardrobe_nodes: Array[Node3D] = []
@@ -207,6 +208,12 @@ func force_look_at_enemy(enemy_face_pos: Vector3) -> void:
 	camera_shake = 0.9
 
 
+func play_wakeup_animation() -> void:
+	wakeup_timer = 1.6
+	head.position.y = 0.75
+	camera.rotation.z = deg_to_rad(14.0)
+
+
 func reset_for_new_day() -> void:
 	if picked and is_instance_valid(detected):
 		detected.picked = false
@@ -232,6 +239,7 @@ func reset_for_new_day() -> void:
 	set_process_unhandled_input(true)
 	label.text = ""
 	label_2.text = ""
+	play_wakeup_animation()
 
 
 func get_held_item_label() -> String:
@@ -451,6 +459,12 @@ func _physics_process(delta):
 		velocity.y = JUMP_VELOCITY
 
 	# Crouch handling
+	if wakeup_timer > 0.0:
+		wakeup_timer = maxf(wakeup_timer - delta, 0.0)
+		camera.rotation.z = lerp_angle(camera.rotation.z, 0.0, delta * 3.2)
+	else:
+		camera.rotation.z = lerp_angle(camera.rotation.z, 0.0, delta * 8.0)
+
 	var want_crouch = Input.is_action_pressed("crouch") or (is_touch_device and gt_bt.button_pressed)
 	if want_crouch:
 		standing_colide_shape.disabled = true

@@ -12,12 +12,12 @@ enum AIState {
 }
 
 # Movement speeds (scale dynamically with aggression)
-const BASE_PATROL_SPEED = 2.35
-const STALK_SPEED = 2.65
-const INVESTIGATE_SPEED = 3.45
-const SEARCH_SPEED = 2.75
-const AMBUSH_SPEED = 4.55
-const BASE_CHASE_SPEED = 4.45
+const BASE_PATROL_SPEED = 2.45
+const STALK_SPEED = 2.7
+const INVESTIGATE_SPEED = 3.5
+const SEARCH_SPEED = 2.8
+const AMBUSH_SPEED = 4.6
+const BASE_CHASE_SPEED = 4.5
 const MAX_CHASE_BONUS = 0.65
 
 # Combat & perception tuning
@@ -34,10 +34,10 @@ const CROUCH_PROXIMITY_RANGE = 1.65
 # Tactical timing
 const BASE_CHASE_MEMORY_TIME = 4.2
 const INVESTIGATE_WAIT_TIME = 2.2
-const PATROL_WAIT_TIME = 1.0
+const PATROL_WAIT_TIME = 0.85
 const AMBUSH_WAIT_TIME = 2.4
-const DOOR_BREACH_PAUSE = 0.28
-const DOOR_CHECK_INTERVAL = 0.20
+const DOOR_BREACH_PAUSE = 0.25
+const DOOR_CHECK_INTERVAL = 0.14
 const ANOMALY_SCAN_INTERVAL = 0.65
 const STUCK_CHECK_INTERVAL = 0.65
 const STUCK_MIN_DISTANCE = 0.16
@@ -64,12 +64,17 @@ var is_attacking: bool = false
 var kill_emitted: bool = false
 var death: bool = true
 
-# Cognitive memory & spatial heat-map
+# Cognitive memory, multi-floor patrol & spatial heat-map
 var patrol_points: Array[Vector3] = []
+var patrol_floors: Array[int] = []
 var zone_heat: Array[float] = []
 var zone_last_visited: Array[float] = []
+var floor_last_visited: Dictionary = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0}
+var current_floor_band: int = 1
+var patrols_on_current_floor: int = 0
 var current_patrol_idx: int = -1
 var current_target_pos: Vector3 = Vector3.ZERO
+var nav_bridges_built: bool = false
 
 # Player tracking & prediction
 var last_known_player_pos: Vector3 = Vector3.ZERO
@@ -109,6 +114,7 @@ var sidestep_timer: float = 0.0
 # Audio timers & traps
 var clown_step_timer: float = 0.0
 var alert_sfx_cooldown: float = 0.0
+var hum_timer: float = 4.0
 var time_since_last_seen: float = 999.0
 var trap_cooldown_timer: float = 12.0
 var active_traps: Array[Area3D] = []
@@ -137,11 +143,126 @@ func _init_ai() -> void:
 		sync_frames += 1
 		if nav_map.is_valid() and NavigationServer3D.map_get_iteration_id(nav_map) > 0:
 			break
+
 	_snapshot_world_doors()
+	if not nav_bridges_built:
+		_bridge_navmesh_islands()
+		nav_bridges_built = true
+		await get_tree().physics_frame
+		await get_tree().physics_frame
+		if not is_inside_tree():
+			return
+
 	_build_patrol_points()
 	ai_ready = true
 	_set_state(AIState.PATROL)
 	_pick_next_patrol_point()
+
+
+func _get_floor_band(y_val: float) -> int:
+	if y_val < 4.8:
+		return 0  # Sewer / Basement
+	if y_val < 8.2:
+		return 1  # Ground Floor
+	if y_val < 11.8:
+		return 2  # 1st Floor
+	return 3      # Attic / Upper Floor
+
+
+func _bridge_navmesh_islands() -> void:
+	var nav_region := get_parent() as NavigationRegion3D
+	if nav_region == null or nav_region.navigation_mesh == null:
+		return
+	var nav_mesh: NavigationMesh = nav_region.navigation_mesh
+	var verts: PackedVector3Array = nav_mesh.get_vertices()
+	var poly_count: int = nav_mesh.get_polygon_count()
+	if verts.is_empty() or poly_count == 0:
+		return
+
+	# Quantize vertices to detect connected polygon islands
+	var adj: Dictionary = {}
+	var coord_map: Dictionary = {}
+	for i in range(poly_count):
+		var poly: PackedInt32Array = nav_mesh.get_polygon(i)
+		for k in range(poly.size()):
+			var v1: Vector3 = nav_region.to_global(verts[poly[k]])
+			var v2: Vector3 = nav_region.to_global(verts[poly[(k + 1) % poly.size()]])
+			if v1.y > 16.5 or v2.y > 16.5:
+				continue
+			var key1: Vector3i = Vector3i(roundi(v1.x * 10.0), roundi(v1.y * 10.0), roundi(v1.z * 10.0))
+			var key2: Vector3i = Vector3i(roundi(v2.x * 10.0), roundi(v2.y * 10.0), roundi(v2.z * 10.0))
+			coord_map[key1] = v1
+			coord_map[key2] = v2
+			if not adj.has(key1):
+				adj[key1] = []
+			if not adj.has(key2):
+				adj[key2] = []
+			(adj[key1] as Array).append(key2)
+			(adj[key2] as Array).append(key1)
+
+	var visited: Dictionary = {}
+	var islands: Array = []
+	for start_k in adj.keys():
+		if visited.has(start_k):
+			continue
+		var queue: Array = [start_k]
+		visited[start_k] = true
+		var comp: Array[Vector3] = []
+		while not queue.is_empty():
+			var cur = queue.pop_front()
+			comp.append(coord_map[cur])
+			for nb in adj[cur]:
+				if not visited.has(nb):
+					visited[nb] = true
+					queue.append(nb)
+		islands.append(comp)
+
+	if islands.size() <= 1:
+		return
+
+	islands.sort_custom(func(a, b) -> bool: return a.size() > b.size())
+
+	# Iteratively bridge disconnected floor/room islands to the connected main graph
+	var connected_pts: Array[Vector3] = []
+	for p in islands[0]:
+		connected_pts.append(p as Vector3)
+
+	var pending_islands: Array = []
+	for idx in range(1, islands.size()):
+		pending_islands.append(islands[idx])
+
+	var made_progress: bool = true
+	var link_count: int = 0
+	while made_progress and not pending_islands.is_empty() and link_count < 24:
+		made_progress = false
+		for idx in range(pending_islands.size() - 1, -1, -1):
+			var isl: Array = pending_islands[idx]
+			var best_dist: float = 9999.0
+			var best_a: Vector3 = Vector3.ZERO
+			var best_b: Vector3 = Vector3.ZERO
+			for pa in isl:
+				var pva: Vector3 = pa as Vector3
+				for pb in connected_pts:
+					var d: float = pva.distance_to(pb)
+					if d < best_dist:
+						best_dist = d
+						best_a = pva
+						best_b = pb
+			if best_dist <= 3.2:
+				var link := NavigationLink3D.new()
+				link.bidirectional = true
+				link.navigation_layers = 1
+				link.enter_cost = 1.0
+				link.travel_cost = 1.0
+				nav_region.add_child(link)
+				link.position = Vector3.ZERO
+				link.start_position = nav_region.to_local(best_a)
+				link.end_position = nav_region.to_local(best_b)
+				link_count += 1
+				for p in isl:
+					connected_pts.append(p)
+				pending_islands.remove_at(idx)
+				made_progress = true
 
 
 func _snapshot_world_doors() -> void:
@@ -156,10 +277,21 @@ func _snapshot_world_doors() -> void:
 			var opened_val = node.get("opened")
 			if opened_val is bool:
 				var id: int = node.get_instance_id()
+				var pos: Vector3 = (node as Node3D).global_position
+				# Find associated door leaf PhysicsBody3D (parent of door_lock, or self)
+				var door_body: PhysicsBody3D = null
+				var door_ref = node.get("door")
+				if door_ref is PhysicsBody3D:
+					door_body = door_ref as PhysicsBody3D
+				elif node is PhysicsBody3D and node.name != "door_lock":
+					door_body = node as PhysicsBody3D
+				elif node.get_parent() is PhysicsBody3D:
+					door_body = node.get_parent() as PhysicsBody3D
 				door_memory[id] = {
 					"node": node,
+					"door_body": door_body,
 					"opened": bool(opened_val),
-					"pos": (node as Node3D).global_position,
+					"pos": pos,
 					"ai_ignore_until": 0.0,
 				}
 		for child in node.get_children():
@@ -168,6 +300,7 @@ func _snapshot_world_doors() -> void:
 
 func _build_patrol_points() -> void:
 	patrol_points.clear()
+	patrol_floors.clear()
 	zone_heat.clear()
 	zone_last_visited.clear()
 
@@ -184,13 +317,13 @@ func _build_patrol_points() -> void:
 				continue
 			var too_close: bool = false
 			for p in candidates:
-				if p.distance_to(world_v) < 4.2:
+				if p.distance_to(world_v) < 3.6:
 					too_close = true
 					break
 			if not too_close:
 				candidates.append(world_v)
 
-	# Reachability filter so the clown never targets disconnected roof/outside islands
+	# Reachability filter across bridged navmesh
 	for cand in candidates:
 		var snapped: Vector3 = _closest_nav_point(cand)
 		if nav_map.is_valid():
@@ -198,9 +331,10 @@ func _build_patrol_points() -> void:
 			if path.is_empty():
 				continue
 			var path_end: Vector3 = path[path.size() - 1]
-			if path_end.distance_to(snapped) > 2.0:
+			if path_end.distance_to(snapped) > 2.2:
 				continue
 		patrol_points.append(snapped)
+		patrol_floors.append(_get_floor_band(snapped.y))
 		zone_heat.append(0.1)
 		zone_last_visited.append(0.0)
 
@@ -211,12 +345,12 @@ func _build_patrol_points() -> void:
 				global_position + Vector3(cos(rad) * 5.5, 0.0, sin(rad) * 5.5)
 			)
 			patrol_points.append(fallback_pt)
+			patrol_floors.append(_get_floor_band(fallback_pt.y))
 			zone_heat.append(0.1)
 			zone_last_visited.append(0.0)
 
 
 func notify_world_changed() -> void:
-	# Re-evaluate reachable rooms after locked doors/gates are opened
 	blocked_doors.clear()
 	_build_patrol_points()
 
@@ -224,7 +358,7 @@ func notify_world_changed() -> void:
 func notify_player_progress(amount: float = 0.14) -> void:
 	aggression = clampf(aggression + amount, 0.0, 1.0)
 	if is_instance_valid(player):
-		_add_heat_near(player.global_position, 1.8)
+		_add_heat_near(player.global_position, 2.2)
 
 
 func _closest_nav_point(world_pos: Vector3) -> Vector3:
@@ -250,8 +384,8 @@ func _is_position_blocked(pos: Vector3) -> bool:
 func _add_heat_near(world_pos: Vector3, amount: float) -> void:
 	for i in range(patrol_points.size()):
 		var d: float = patrol_points[i].distance_to(world_pos)
-		if d < 10.0:
-			var falloff: float = 1.0 - (d / 10.0)
+		if d < 12.0:
+			var falloff: float = 1.0 - (d / 12.0)
 			zone_heat[i] = clampf(zone_heat[i] + amount * falloff, 0.0, 6.0)
 
 
@@ -275,6 +409,14 @@ func _pick_next_patrol_point() -> void:
 	if patrol_points.is_empty():
 		return
 	var now: float = Time.get_ticks_msec() * 0.001
+	var my_floor: int = _get_floor_band(global_position.y)
+	if my_floor == current_floor_band:
+		patrols_on_current_floor += 1
+	else:
+		current_floor_band = my_floor
+		patrols_on_current_floor = 1
+
+	var force_floor_change: bool = patrols_on_current_floor >= 2
 	var best_idx: int = -1
 	var best_score: float = -100000.0
 
@@ -285,9 +427,13 @@ func _pick_next_patrol_point() -> void:
 		var dist: float = pt.distance_to(global_position)
 		if dist < 2.5 or _is_position_blocked(pt):
 			continue
-		var staleness: float = minf(now - zone_last_visited[i], 60.0)
-		var floor_bonus: float = 4.0 if absf(pt.y - global_position.y) < 2.5 else 0.0
-		var score: float = staleness * 1.15 + zone_heat[i] * 3.2 + floor_bonus - dist * 0.25 + randf_range(0.0, 6.0)
+		var band: int = patrol_floors[i]
+		var staleness: float = minf(now - zone_last_visited[i], 80.0)
+		var floor_staleness: float = minf(now - float(floor_last_visited.get(band, 0.0)), 60.0)
+		var cross_floor_bonus: float = 0.0
+		if band != my_floor:
+			cross_floor_bonus = (26.0 if force_floor_change else 8.0) + floor_staleness * 0.65
+		var score: float = staleness * 1.1 + zone_heat[i] * 3.4 + cross_floor_bonus - dist * 0.08 + randf_range(0.0, 8.0)
 		if score > best_score:
 			best_score = score
 			best_idx = i
@@ -296,6 +442,11 @@ func _pick_next_patrol_point() -> void:
 		best_idx = randi() % patrol_points.size()
 
 	current_patrol_idx = best_idx
+	var chosen_band: int = patrol_floors[best_idx]
+	if chosen_band != current_floor_band:
+		patrols_on_current_floor = 0
+		current_floor_band = chosen_band
+	floor_last_visited[chosen_band] = now
 	zone_last_visited[best_idx] = now
 	current_target_pos = patrol_points[best_idx]
 	nav_agent.set_target_position(current_target_pos)
@@ -305,16 +456,15 @@ func _pick_next_patrol_point() -> void:
 func hear_noise(noise_pos: Vector3, radius: float, priority: float = 1.0) -> void:
 	if not ai_ready or is_attacking:
 		return
-	# Sounds on other floors travel less effectively unless loud
 	var vertical_diff: float = absf(noise_pos.y - global_position.y)
-	var effective_radius: float = radius * (0.65 if vertical_diff > 3.0 else 1.0)
+	var effective_radius: float = radius * (0.72 if vertical_diff > 3.0 else 1.0)
 	var dist: float = global_position.distance_to(noise_pos)
 	if dist > effective_radius:
 		return
 
-	_add_heat_near(noise_pos, 0.9 * priority)
+	_add_heat_near(noise_pos, 1.1 * priority)
 	var closeness: float = 1.0 - (dist / maxf(effective_radius, 0.1))
-	suspicion = clampf(suspicion + (22.0 + 38.0 * closeness) * priority, 0.0, 100.0)
+	suspicion = clampf(suspicion + (24.0 + 38.0 * closeness) * priority, 0.0, 100.0)
 
 	var nav_target: Vector3 = _closest_nav_point(noise_pos)
 	if ai_state == AIState.CHASE:
@@ -378,7 +528,6 @@ func _has_line_of_sight_to_player() -> bool:
 
 
 func _evaluate_vision() -> int:
-	# Returns: 0 = not visible, 1 = peripheral glimpse, 2 = clear core/proximity sight
 	if player == null or not is_instance_valid(player):
 		return 0
 	var is_player_hidden: bool = player.get("is_hidden") == true
@@ -452,7 +601,6 @@ func _scan_environmental_anomalies() -> void:
 		if current_opened == remembered_opened:
 			continue
 
-		# Check if AI has line of sight to this altered door
 		var q: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(eye_origin, door_pos + Vector3(0.0, 0.8, 0.0))
 		q.exclude = [get_rid()]
 		q.collision_mask = 1
@@ -460,7 +608,6 @@ func _scan_environmental_anomalies() -> void:
 		if not hit.is_empty():
 			continue
 
-		# Tampered door spotted! Update memory and investigate
 		info["opened"] = current_opened
 		suspicion = clampf(suspicion + 45.0, 0.0, 100.0)
 		_add_heat_near(door_pos, 2.2)
@@ -472,27 +619,38 @@ func _scan_environmental_anomalies() -> void:
 		return
 
 
-func _check_door_ahead(move_dir: Vector3) -> int:
-	# Returns: 0 = clear, 1 = unlocked door being opened, 2 = locked door blocking path
-	if move_dir.length_squared() < 0.01:
-		return 0
-	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
-	var dir_horiz: Vector3 = Vector3(move_dir.x, 0.0, move_dir.z).normalized()
-	var origin: Vector3 = global_position + Vector3(0.0, 1.0, 0.0)
-	var target: Vector3 = origin + dir_horiz * 1.65
-	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, target)
-	query.exclude = [get_rid()]
-	query.collision_mask = 4
-	var hit: Dictionary = space_state.intersect_ray(query)
-	if hit.is_empty():
-		return 0
-	var col = hit.get("collider")
-	if col == null or not is_instance_valid(col) or not col.has_method("interact"):
-		return 0
+func _temp_ignore_door_body(body: PhysicsBody3D) -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	add_collision_exception_with(body)
+	var t := get_tree().create_timer(1.4)
+	t.timeout.connect(func():
+		if is_instance_valid(self) and is_instance_valid(body):
+			remove_collision_exception_with(body)
+	)
 
-	var locked: bool = (col.get("keyreq") == true) or (col.get("beatreq") == true) or (col.get("pinreq") == true)
+
+func _resolve_door_interact_node(col: Object) -> Node:
+	if col == null or not is_instance_valid(col):
+		return null
+	if col is Node:
+		var node: Node = col as Node
+		if node.has_method("interact"):
+			return node
+		var lock_child: Node = node.get_node_or_null("door_lock")
+		if lock_child and lock_child.has_method("interact"):
+			return lock_child
+		if node.get_parent() and node.get_parent().has_method("interact"):
+			return node.get_parent()
+	return null
+
+
+func _open_door_node(door_node: Node, door_body: PhysicsBody3D, fallback_pos: Vector3) -> int:
+	if door_node == null or not is_instance_valid(door_node):
+		return 0
+	var locked: bool = (door_node.get("keyreq") == true) or (door_node.get("beatreq") == true) or (door_node.get("pinreq") == true)
+	var door_pos: Vector3 = (door_node as Node3D).global_position if door_node is Node3D else fallback_pos
 	if locked:
-		var door_pos: Vector3 = (col as Node3D).global_position if col is Node3D else target
 		if not _is_position_blocked(door_pos):
 			blocked_doors.append({
 				"pos": door_pos,
@@ -500,16 +658,64 @@ func _check_door_ahead(move_dir: Vector3) -> int:
 			})
 		return 2
 
-	if col.get("opened") == false:
-		var cid: int = col.get_instance_id()
+	if door_node.get("opened") == false:
+		var cid: int = door_node.get_instance_id()
 		if door_memory.has(cid):
 			door_memory[cid]["opened"] = true
-			door_memory[cid]["ai_ignore_until"] = Time.get_ticks_msec() * 0.001 + 4.0
-		col.interact()
+			door_memory[cid]["ai_ignore_until"] = Time.get_ticks_msec() * 0.001 + 4.5
+		if door_body:
+			_temp_ignore_door_body(door_body)
+		elif door_node.get_parent() is PhysicsBody3D:
+			_temp_ignore_door_body(door_node.get_parent() as PhysicsBody3D)
+		elif door_node is PhysicsBody3D:
+			_temp_ignore_door_body(door_node as PhysicsBody3D)
+		door_node.interact()
 		if has_node("/root/AudioManager"):
-			get_node("/root/AudioManager").play_sfx_3d("door_open", (col as Node3D).global_position if col is Node3D else global_position, -2.0, randf_range(0.85, 1.05), 18.0)
+			get_node("/root/AudioManager").play_sfx_3d("door_open", door_pos, -2.0, randf_range(0.85, 1.05), 18.0)
 		return 1
 	return 0
+
+
+func _check_door_ahead(move_dir: Vector3) -> int:
+	# Returns: 0 = clear, 1 = unlocked door being opened, 2 = locked door blocking path
+	if move_dir.length_squared() < 0.01:
+		return 0
+	var dir_horiz: Vector3 = Vector3(move_dir.x, 0.0, move_dir.z).normalized()
+
+	# 1) Proximity check against snapshotted doors in front of clown (catches doors even when ray misses tiny knob!)
+	for id in door_memory.keys():
+		var info: Dictionary = door_memory[id]
+		var dnode: Node = info["node"]
+		if not is_instance_valid(dnode) or dnode.get("opened") != false:
+			continue
+		var dpos: Vector3 = info["pos"]
+		if absf(dpos.y - global_position.y) > 2.2:
+			continue
+		var to_door: Vector3 = Vector3(dpos.x - global_position.x, 0.0, dpos.z - global_position.z)
+		var dist: float = to_door.length()
+		if dist < 2.15 and dist > 0.05:
+			if dir_horiz.dot(to_door / dist) > 0.15:
+				var dbody: PhysicsBody3D = info.get("door_body") as PhysicsBody3D
+				var res: int = _open_door_node(dnode, dbody, dpos)
+				if res != 0:
+					return res
+
+	# 2) Forward raycast on both layer 1 (door panel) and layer 4 (door lock/knob)
+	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+	var origin: Vector3 = global_position + Vector3(0.0, 1.1, 0.0)
+	var target: Vector3 = origin + dir_horiz * 1.85
+	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, target)
+	query.exclude = [get_rid()]
+	query.collision_mask = 1 | 4
+	var hit: Dictionary = space_state.intersect_ray(query)
+	if hit.is_empty():
+		return 0
+	var col = hit.get("collider")
+	var door_node: Node = _resolve_door_interact_node(col)
+	if door_node == null:
+		return 0
+	var hit_body: PhysicsBody3D = col as PhysicsBody3D
+	return _open_door_node(door_node, hit_body, target)
 
 
 func _build_search_fan(center_pos: Vector3) -> void:
@@ -598,7 +804,6 @@ func _physics_process(delta: float) -> void:
 	if not ai_ready:
 		return
 
-	# Passive director escalation & heat decay
 	aggression = clampf(aggression + delta * 0.0018, 0.0, 1.0)
 	for i in range(zone_heat.size()):
 		zone_heat[i] = maxf(zone_heat[i] - delta * 0.015, 0.0)
@@ -626,7 +831,14 @@ func _physics_process(delta: float) -> void:
 	if alert_sfx_cooldown > 0.0:
 		alert_sfx_cooldown -= delta
 
-	# Periodically drop Granny-style Bear Traps while patrolling/hunting
+	# Creepy 3D patrol hum so player hears the clown roaming nearby floors
+	hum_timer -= delta
+	if hum_timer <= 0.0:
+		hum_timer = randf_range(7.0, 12.5)
+		if ai_state == AIState.PATROL or ai_state == AIState.STALK or ai_state == AIState.SEARCH:
+			if has_node("/root/AudioManager"):
+				get_node("/root/AudioManager").play_sfx_3d("clown_hum", global_position, -7.5, randf_range(0.92, 1.06), 19.0)
+
 	_update_trap_placement(delta)
 
 	# Dynamic tension / heartbeat feedback for AudioManager
@@ -642,18 +854,15 @@ func _physics_process(delta: float) -> void:
 			state_bonus = 0.18
 		get_node("/root/AudioManager").set_chase_intensity(clampf(proximity_tension * 0.75 + state_bonus, 0.0, 1.0))
 
-	# Immediate kill check
 	if _target_in_attack_range():
 		_trigger_attack()
 		return
 
-	# Environmental forensics scan
 	anomaly_scan_timer += delta
 	if anomaly_scan_timer >= ANOMALY_SCAN_INTERVAL:
 		anomaly_scan_timer = 0.0
 		_scan_environmental_anomalies()
 
-	# Multi-zone perception update
 	var vision: int = _evaluate_vision()
 	var dist_to_player: float = global_position.distance_to(player.global_position)
 
@@ -665,14 +874,12 @@ func _physics_process(delta: float) -> void:
 		suspicion = clampf(suspicion + delta * (120.0 if dist_to_player < 9.0 else 75.0), 0.0, 100.0)
 		lose_sight_timer = BASE_CHASE_MEMORY_TIME + aggression * 2.5
 
-		# Predator Stalk vs Immediate Chase decision
 		if ai_state != AIState.CHASE and dist_to_player > 9.5 and not _is_player_facing_me():
 			_set_state(AIState.STALK)
 			nav_agent.set_target_position(last_known_player_pos)
 		elif suspicion >= 65.0 or dist_to_player <= 9.5 or _is_player_facing_me():
 			_set_state(AIState.CHASE)
 	elif vision == 1:
-		# Peripheral glimpse builds suspicion smoothly
 		var gain_rate: float = (68.0 if not _is_player_crouched() else 38.0) * (1.0 + aggression * 0.4)
 		suspicion = clampf(suspicion + delta * gain_rate, 0.0, 100.0)
 		last_known_player_pos = _closest_nav_point(player.global_position)
@@ -690,7 +897,6 @@ func _physics_process(delta: float) -> void:
 		if ai_state == AIState.CHASE:
 			lose_sight_timer -= delta
 			if lose_sight_timer <= 0.0:
-				# Decide between predictive AMBUSH cutoff or local SEARCH sweep
 				if last_known_player_vel.length() > 2.0 and aggression >= 0.30:
 					var cutoff: Vector3 = _closest_nav_point(
 						last_known_player_pos + last_known_player_vel.normalized() * 5.5
@@ -705,13 +911,11 @@ func _physics_process(delta: float) -> void:
 					wait_timer = 1.1
 					_set_state(AIState.SEARCH)
 		elif ai_state == AIState.STALK:
-			# Lost sight while stalking -> investigate last spot
 			current_target_pos = last_known_player_pos
 			nav_agent.set_target_position(current_target_pos)
 			wait_timer = INVESTIGATE_WAIT_TIME
 			_set_state(AIState.INVESTIGATE)
 
-	# Animation control
 	if anim_tree:
 		anim_tree.set("parameters/conditions/attack", false)
 		anim_tree.set("parameters/conditions/run", true)
@@ -730,7 +934,6 @@ func _physics_process(delta: float) -> void:
 				wait_timer = 1.0
 				_set_state(AIState.SEARCH)
 		AIState.STALK:
-			# Creepy corner-freeze if player begins turning around at medium range
 			if _is_player_facing_me() and dist_to_player > 10.5 and stalk_freeze_timer <= 0.0:
 				stalk_freeze_timer = 0.55
 			if stalk_freeze_timer > 0.0:
@@ -777,7 +980,6 @@ func _physics_process(delta: float) -> void:
 			if nav_agent.is_navigation_finished():
 				should_move = false
 				wait_timer -= delta
-				# Watch toward expected player approach direction
 				if last_known_player_vel.length() > 0.2:
 					var watch_yaw: float = atan2(last_known_player_vel.x, last_known_player_vel.z)
 					rotation.y = lerp_angle(rotation.y, watch_yaw, delta * 3.0)
@@ -793,7 +995,7 @@ func _physics_process(delta: float) -> void:
 				_set_state(post_breach_state)
 		AIState.PATROL:
 			move_speed = BASE_PATROL_SPEED + aggression * 0.35
-			if nav_agent.is_navigation_finished():
+			if nav_agent.is_navigation_finished() or state_timer > 22.0:
 				should_move = false
 				if wait_timer <= 0.0:
 					wait_timer = PATROL_WAIT_TIME
@@ -801,8 +1003,8 @@ func _physics_process(delta: float) -> void:
 					wait_timer -= delta
 					if wait_timer <= 0.0:
 						_pick_next_patrol_point()
+						state_timer = 0.0
 
-	# Gravity
 	if not is_on_floor():
 		velocity.y -= GRAVITY * delta
 	else:
@@ -834,7 +1036,6 @@ func _physics_process(delta: float) -> void:
 					velocity.x = 0.0
 					velocity.z = 0.0
 				elif door_res == 2:
-					# Locked door blocking path -> pick a different route immediately
 					if ai_state != AIState.CHASE:
 						_set_state(AIState.PATROL)
 						_pick_next_patrol_point()
@@ -842,7 +1043,6 @@ func _physics_process(delta: float) -> void:
 			velocity.x = 0.0
 			velocity.z = 0.0
 
-		# Two-stage anti-stuck recovery
 		stuck_check_timer += delta
 		if stuck_check_timer >= STUCK_CHECK_INTERVAL:
 			stuck_check_timer = 0.0
@@ -854,12 +1054,16 @@ func _physics_process(delta: float) -> void:
 			if moved < STUCK_MIN_DISTANCE:
 				stuck_count += 1
 				if stuck_count == 1:
-					var side: Vector3 = Vector3(-horiz_dir.z, 0.0, horiz_dir.x)
-					if randf() < 0.5:
-						side = -side
-					sidestep_dir = side.normalized()
-					sidestep_timer = 0.45
-					nav_agent.set_target_position(nav_agent.target_position)
+					# Try opening any nearby door before sidestepping
+					if _check_door_ahead(-global_transform.basis.z) == 1:
+						stuck_count = 0
+					else:
+						var side: Vector3 = Vector3(-horiz_dir.z, 0.0, horiz_dir.x)
+						if randf() < 0.5:
+							side = -side
+						sidestep_dir = side.normalized()
+						sidestep_timer = 0.45
+						nav_agent.set_target_position(nav_agent.target_position)
 				else:
 					stuck_count = 0
 					if ai_state != AIState.CHASE or vision != 2:
