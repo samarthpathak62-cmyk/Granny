@@ -17,6 +17,10 @@ func _ready():
 	get_tree().paused = false
 	Engine.time_scale = 1.0
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	if has_node("/root/AudioManager"):
+		var am = get_node("/root/AudioManager")
+		am.set_chase_intensity(0.0)
+		am.start_ambience(-10.0)
 
 	menu.visible = true
 	options.visible = false
@@ -53,25 +57,35 @@ func _process(_delta):
 			showandhide(menu, options)
 
 
+func _play_click() -> void:
+	if has_node("/root/AudioManager"):
+		get_node("/root/AudioManager").play_sfx("ui_click", -3.0)
+
+
 func _on_new_game_pressed():
+	_play_click()
 	get_tree().paused = false
 	Engine.time_scale = 1.0
 	get_tree().change_scene_to_packed(mainhouse)
 
 
 func _on_options_pressed():
+	_play_click()
 	showandhide(options, menu)
 
 
 func _on_exit_pressed():
+	_play_click()
 	get_tree().quit()
 
 
 func _on_graphics_pressed():
+	_play_click()
 	showandhide(graphics, options)
 
 
 func _on_audio_pressed():
+	_play_click()
 	showandhide(audio, options)
 
 
@@ -117,16 +131,20 @@ func _on_sound_fx_value_changed(value):
 
 
 func _on_backfrom_audio_pressed():
+	_play_click()
 	showandhide(options, audio)
 
 
 func _on_backfrom_graphics_pressed():
+	_play_click()
 	showandhide(options, graphics)
 
 
 func _on_backfrom_options_pressed():
+	_play_click()
 	showandhide(menu, options)
 
 
 func _on_load_game_pressed():
+	_play_click()
 	get_tree().change_scene_to_file("res://scenes/load_game_menu.tscn")

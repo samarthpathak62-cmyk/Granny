@@ -103,6 +103,10 @@ var stuck_count: int = 0
 var sidestep_dir: Vector3 = Vector3.ZERO
 var sidestep_timer: float = 0.0
 
+# Audio timers
+var clown_step_timer: float = 0.0
+var alert_sfx_cooldown: float = 0.0
+
 
 func _ready() -> void:
 	add_to_group("enemy")
@@ -248,8 +252,13 @@ func _add_heat_near(world_pos: Vector3, amount: float) -> void:
 func _set_state(new_state: AIState) -> void:
 	if ai_state == new_state:
 		return
+	var prev_state: AIState = ai_state
 	ai_state = new_state
 	state_timer = 0.0
+	if ai_state == AIState.CHASE and prev_state != AIState.CHASE and alert_sfx_cooldown <= 0.0:
+		alert_sfx_cooldown = 4.5
+		if has_node("/root/AudioManager"):
+			get_node("/root/AudioManager").play_sfx_3d("clown_alert", global_position, 2.0, randf_range(0.95, 1.06), 28.0)
 	if int(ai_state) != last_emitted_state:
 		last_emitted_state = int(ai_state)
 		var names: Array[String] = ["PATROL", "STALK", "INVESTIGATE", "SEARCH", "AMBUSH", "CHASE", "DOOR_BREACH", "ATTACK"]
@@ -485,6 +494,8 @@ func _check_door_ahead(move_dir: Vector3) -> int:
 			door_memory[cid]["opened"] = true
 			door_memory[cid]["ai_ignore_until"] = Time.get_ticks_msec() * 0.001 + 4.0
 		col.interact()
+		if has_node("/root/AudioManager"):
+			get_node("/root/AudioManager").play_sfx_3d("door_open", (col as Node3D).global_position if col is Node3D else global_position, -2.0, randf_range(0.85, 1.05), 18.0)
 		return 1
 	return 0
 
@@ -530,6 +541,10 @@ func _trigger_attack() -> void:
 	is_attacking = true
 	_set_state(AIState.ATTACK)
 	velocity = Vector3.ZERO
+	if has_node("/root/AudioManager"):
+		var am = get_node("/root/AudioManager")
+		am.set_chase_intensity(1.0)
+		am.play_sfx("clown_jumpscare", 3.0, 1.0)
 
 	if anim_tree:
 		anim_tree.set("parameters/conditions/attack", true)
@@ -593,6 +608,21 @@ func _physics_process(delta: float) -> void:
 
 	_update_player_velocity(delta)
 	state_timer += delta
+	if alert_sfx_cooldown > 0.0:
+		alert_sfx_cooldown -= delta
+
+	# Dynamic tension / heartbeat feedback for AudioManager
+	if has_node("/root/AudioManager"):
+		var dist_p: float = global_position.distance_to(player.global_position)
+		var proximity_tension: float = clampf(1.0 - (dist_p / 16.0), 0.0, 1.0)
+		var state_bonus: float = 0.0
+		if ai_state == AIState.CHASE:
+			state_bonus = 0.55
+		elif ai_state == AIState.AMBUSH or ai_state == AIState.STALK:
+			state_bonus = 0.30
+		elif ai_state == AIState.SEARCH or ai_state == AIState.INVESTIGATE:
+			state_bonus = 0.18
+		get_node("/root/AudioManager").set_chase_intensity(clampf(proximity_tension * 0.75 + state_bonus, 0.0, 1.0))
 
 	# Immediate kill check
 	if _target_in_attack_range():
@@ -825,6 +855,18 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.x = lerp(velocity.x, 0.0, delta * 9.0)
 		velocity.z = lerp(velocity.z, 0.0, delta * 9.0)
+
+	# 3D Spatial Clown Footsteps
+	var clown_horiz_speed: float = Vector2(velocity.x, velocity.z).length()
+	if is_on_floor() and clown_horiz_speed > 0.8 and not is_attacking:
+		clown_step_timer -= delta
+		if clown_step_timer <= 0.0:
+			clown_step_timer = clampf(1.22 / maxf(clown_horiz_speed, 1.0), 0.24, 0.58)
+			if has_node("/root/AudioManager"):
+				var vol: float = -3.0 if ai_state == AIState.CHASE else -7.5
+				get_node("/root/AudioManager").play_sfx_3d("footstep_clown", global_position, vol, randf_range(0.86, 1.08), 22.0)
+	else:
+		clown_step_timer = 0.05
 
 	move_and_slide()
 

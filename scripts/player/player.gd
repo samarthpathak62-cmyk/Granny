@@ -127,6 +127,11 @@ func _can_interact_collider(col: Object) -> bool:
 	return col.has_method("interact")
 
 
+func _play_sfx(sound_name: String, volume_db: float = 0.0, pitch_scale: float = 1.0) -> void:
+	if has_node("/root/AudioManager"):
+		get_node("/root/AudioManager").play_sfx(sound_name, volume_db, pitch_scale)
+
+
 func _emit_noise(radius: float, priority: float = 1.0) -> void:
 	get_tree().call_group("enemy", "hear_noise", global_position, radius, priority)
 
@@ -176,11 +181,13 @@ func _process(delta):
 				picked = true
 				detected = col
 				col.picked = true
+				_play_sfx("pickup", -2.0, randf_range(0.95, 1.08))
 			elif col != detected:
 				detected.picked = false
 				detected.dropped = true
 				detected = col
 				col.picked = true
+				_play_sfx("pickup", -2.0, randf_range(0.95, 1.08))
 
 	# Keep held item in hand & handle drop
 	if picked:
@@ -191,6 +198,7 @@ func _process(delta):
 			detected.dropped = true
 			picked = false
 			detected = null
+			_play_sfx("drop", -1.5, randf_range(0.92, 1.08))
 			_emit_noise(DROP_NOISE_RADIUS)
 	else:
 		bx_bt.visible = false
@@ -219,6 +227,7 @@ func _process(delta):
 		else:
 			label.text = "[E] BOAT (NEED BOAT GEAR)"
 			if want_interact:
+				_play_sfx("door_locked", -2.0)
 				_show_hint("NEED BOAT GEAR to ESCAPE")
 	elif _can_interact_collider(interact_col):
 		ws_bt.visible = false
@@ -236,15 +245,18 @@ func _process(delta):
 					hold_player_circle_loading()
 					timer.start()
 				else:
+					_play_sfx("door_locked", -2.0, randf_range(0.95, 1.05))
 					_show_hint("NEED a KEY to OPEN")
 			elif needs_beat:
 				var req_beat = str(interact_col.get("beatname"))
 				if picked and is_instance_valid(detected) and detected.name == req_beat:
 					interact_col.interact()
 					interact_col.collision_layer = 1
+					_play_sfx("plank_break", 0.0, randf_range(0.95, 1.05))
 					_emit_noise(UNLOCK_NOISE_RADIUS, 1.5)
 					_notify_enemy_progress(0.18)
 				else:
+					_play_sfx("door_locked", -2.0, randf_range(0.95, 1.05))
 					_show_hint("NEED a HAMMER to OPEN")
 			elif needs_pin:
 				if picked and is_instance_valid(detected) and detected.name == "lockpin":
@@ -252,9 +264,11 @@ func _process(delta):
 					hold_player_circle_loading()
 					timer.start()
 				else:
+					_play_sfx("door_locked", -2.0, randf_range(0.95, 1.05))
 					_show_hint("NEED a LOCKPIN to OPEN")
 			else:
 				interact_col.interact()
+				_play_sfx("door_open", -3.5, randf_range(0.90, 1.10))
 				_emit_noise(INTERACT_NOISE_RADIUS * 0.6)
 	else:
 		label.text = ""
@@ -320,12 +334,14 @@ func _physics_process(delta):
 		sprint_noise_timer -= delta
 		if sprint_noise_timer <= 0.0:
 			sprint_noise_timer = SPRINT_NOISE_INTERVAL
+			_play_sfx("footstep_player", -6.0, randf_range(0.95, 1.15))
 			_emit_noise(SPRINT_NOISE_RADIUS, 1.25)
 	elif not crouched and is_on_floor() and horiz_speed > 1.5:
 		sprint_noise_timer = 0.0
 		walk_noise_timer -= delta
 		if walk_noise_timer <= 0.0:
 			walk_noise_timer = WALK_NOISE_INTERVAL
+			_play_sfx("footstep_player", -12.0, randf_range(0.88, 1.05))
 			_emit_noise(WALK_NOISE_RADIUS, 0.7)
 	else:
 		sprint_noise_timer = 0.0
@@ -364,6 +380,7 @@ func _on_timer_timeout() -> void:
 			pending_unlock_target.set("pinreq", false)
 		elif pending_unlock_target is CollisionObject3D:
 			pending_unlock_target.collision_layer = 1
+		_play_sfx("unlock", -1.0, randf_range(0.95, 1.05))
 		_emit_noise(UNLOCK_NOISE_RADIUS, 1.4)
 		_notify_enemy_progress(0.16)
 	pending_unlock_target = null

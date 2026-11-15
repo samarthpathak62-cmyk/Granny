@@ -13,12 +13,18 @@ func _process(_delta):
 
 
 func _on_save_01_pressed():
+	if has_node("/root/AudioManager"):
+		get_node("/root/AudioManager").play_sfx("ui_click", -3.0)
 	get_tree().change_scene_to_file("res://scenes/Main House/house-2.tscn")
 
 
 func _on_save_02_pressed():
+	if has_node("/root/AudioManager"):
+		get_node("/root/AudioManager").play_sfx("ui_click", -3.0)
 	get_tree().change_scene_to_file("res://scenes/Main House/house.tscn")
 
 
 func _on_back_pressed():
+	if has_node("/root/AudioManager"):
+		get_node("/root/AudioManager").play_sfx("ui_click", -3.0)
 	get_tree().change_scene_to_file("res://scenes/mainmenu.tscn")
