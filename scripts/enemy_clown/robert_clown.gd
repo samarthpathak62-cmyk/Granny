@@ -112,7 +112,7 @@ func _pick_next_patrol_point() -> void:
 	if patrol_points.is_empty():
 		return
 	var attempts := 0
-	var chosen := patrol_points[randi() % patrol_points.size()]
+	var chosen: Vector3 = patrol_points[randi() % patrol_points.size()]
 	while attempts < 8:
 		var idx := randi() % patrol_points.size()
 		if idx != current_patrol_idx or patrol_points.size() == 1:
@@ -150,7 +150,7 @@ func hear_noise(noise_pos: Vector3, radius: float) -> void:
 func _get_player_eye_pos() -> Vector3:
 	if player == null:
 		return Vector3.ZERO
-	var is_crouched := player.get("crouched") == true
+	var is_crouched: bool = player.get("crouched") == true
 	var y_offset := 0.75 if is_crouched else 1.35
 	return player.global_position + Vector3(0.0, y_offset, 0.0)
 
