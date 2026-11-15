@@ -2,13 +2,20 @@ extends CharacterBody3D
 
 var speed
 const WALK_SPEED = 4.0
-const SPRINT_SPEED = 8.0
+const SPRINT_SPEED = 7.6
 const JUMP_VELOCITY = 4.8
 const SENSITIVITY = 0.004
 const TOUCH_SENSITIVITY = 0.006
-const CROUCH_SPEED = 2.5
+const CROUCH_SPEED = 2.4
 const CROUCH_DEPTH = 0.8
 const STAND_HEIGHT = 1.8
+
+# stamina variables
+const MAX_STAMINA = 100.0
+const STAMINA_DRAIN = 26.0
+const STAMINA_REGEN = 18.0
+var stamina: float = MAX_STAMINA
+var stamina_exhausted: bool = false
 
 # bob variables
 const BOB_FREQ = 2.4
@@ -48,7 +55,9 @@ var crouched = false
 var gravity = 9.8
 @onready var head: Node3D = $head
 @onready var camera: Camera3D = $head/Camera3D
+@onready var flashlight: SpotLight3D = $head/Camera3D/SpotLight3D
 var camera_base_pos: Vector3 = Vector3.ZERO
+var flashlight_on: bool = true
 
 # pickme
 @onready var hand: Node3D = $head/hand
@@ -69,6 +78,14 @@ var is_unlocking := false
 var pending_unlock_target: Object = null
 var hint_timer := 0.0
 
+# Granny survival state
+var is_hidden: bool = false
+var trapped_timer: float = 0.0
+var camera_shake: float = 0.0
+var jumpscare_target_pos: Vector3 = Vector3.ZERO
+var jumpscare_lock_active: bool = false
+var wardrobe_nodes: Array[Node3D] = []
+
 var mobile_pick_pressed := false
 var mobile_drop_pressed := false
 var mobile_interact_pressed := false
@@ -79,6 +96,8 @@ func _ready():
 	camera_base_pos = camera.transform.origin
 	standing_colide_shape.disabled = false
 	crouch_colide_shape.disabled = true
+	if flashlight:
+		flashlight.visible = flashlight_on
 
 	is_touch_device = DisplayServer.is_touchscreen_available()
 	if is_touch_device:
@@ -100,20 +119,48 @@ func _ready():
 	ws_bt.pressed.connect(func(): mobile_pick_pressed = true)
 	bx_bt.pressed.connect(func(): mobile_drop_pressed = true)
 	rc_bt.pressed.connect(func(): mobile_interact_pressed = true)
+	call_deferred("_cache_wardrobes")
+
+
+func _cache_wardrobes() -> void:
+	wardrobe_nodes.clear()
+	var root: Node = get_tree().current_scene
+	if root == null:
+		return
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is Node3D and n.name.to_lower().begins_with("wardrobe"):
+			wardrobe_nodes.append(n as Node3D)
+		for c in n.get_children():
+			stack.append(c)
 
 
 func _unhandled_input(event):
+	if jumpscare_lock_active:
+		return
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		head.rotate_y(-event.relative.x * SENSITIVITY)
 		camera.rotate_x(-event.relative.y * SENSITIVITY)
 		camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-60), deg_to_rad(60))
 	elif event is InputEventScreenDrag and is_touch_device:
-		# Allow camera look on right half of screen
 		var viewport_width = get_viewport().get_visible_rect().size.x
 		if event.position.x > viewport_width * 0.45:
 			head.rotate_y(-event.relative.x * TOUCH_SENSITIVITY)
 			camera.rotate_x(-event.relative.y * TOUCH_SENSITIVITY)
 			camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-60), deg_to_rad(60))
+	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+		_toggle_flashlight()
+	elif event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_T or event.keycode == KEY_L:
+			_toggle_flashlight()
+
+
+func _toggle_flashlight() -> void:
+	flashlight_on = !flashlight_on
+	if flashlight:
+		flashlight.visible = flashlight_on
+	_play_sfx("ui_click", -5.0, 1.2 if flashlight_on else 0.85)
 
 
 func _can_interact_collider(col: Object) -> bool:
@@ -121,7 +168,6 @@ func _can_interact_collider(col: Object) -> bool:
 		return false
 	if not (col is CollisionObject3D):
 		return false
-	# Layer 3 ("doors") is bit 4; exclude floors/walls even if layer 10 is set
 	if (col.collision_layer & 4) == 0:
 		return false
 	return col.has_method("interact")
@@ -146,13 +192,124 @@ func _show_hint(msg: String, duration: float = 2.0) -> void:
 	hint_timer = duration
 
 
+func trap_player(duration: float = 3.5) -> void:
+	trapped_timer = maxf(trapped_timer, duration)
+	camera_shake = 0.75
+	_show_hint("BEAR TRAP! Press [E] repeatedly to break free!", 3.5)
+	var root: Node = get_tree().current_scene
+	if root and root.has_method("trigger_blood_flash"):
+		root.trigger_blood_flash(0.85)
+
+
+func force_look_at_enemy(enemy_face_pos: Vector3) -> void:
+	jumpscare_target_pos = enemy_face_pos
+	jumpscare_lock_active = true
+	camera_shake = 0.9
+
+
+func reset_for_new_day() -> void:
+	if picked and is_instance_valid(detected):
+		detected.picked = false
+		detected.dropped = true
+	picked = false
+	detected = null
+	jumpscare_lock_active = false
+	trapped_timer = 0.0
+	is_unlocking = false
+	pending_unlock_target = null
+	stamina = MAX_STAMINA
+	stamina_exhausted = false
+	camera_shake = 0.0
+	velocity = Vector3.ZERO
+	crouched = false
+	is_hidden = false
+	standing_colide_shape.disabled = false
+	crouch_colide_shape.disabled = true
+	head.position.y = STAND_HEIGHT
+	camera.rotation = Vector3.ZERO
+	set_physics_process(true)
+	set_process_input(true)
+	set_process_unhandled_input(true)
+	label.text = ""
+	label_2.text = ""
+
+
+func get_held_item_label() -> String:
+	if not picked or not is_instance_valid(detected):
+		return "Hands: Empty"
+	var pretty: Dictionary = {
+		"hammer": "Hammer",
+		"old_key": "Wardrobe Key",
+		"grid_key": "Grid Gate Key",
+		"gf_base_door_key": "Basement Key",
+		"lockpin": "Lockpin",
+		"monster_key": "Master Key",
+		"need_gear": "Boat Gear",
+	}
+	return "Holding: %s" % str(pretty.get(detected.name, detected.name))
+
+
+func get_stealth_status() -> String:
+	if trapped_timer > 0.0:
+		return "TRAPPED! Press [E]!"
+	if is_hidden:
+		return "HIDDEN (Wardrobe)"
+	if crouched:
+		return "CROUCHED (Silent)"
+	if not flashlight_on:
+		return "DARK STEALTH (Light Off)"
+	return ""
+
+
+func get_stamina_ratio() -> float:
+	return clampf(stamina / MAX_STAMINA, 0.0, 1.0)
+
+
+func _update_wardrobe_hiding() -> void:
+	is_hidden = false
+	if not crouched:
+		return
+	for w in wardrobe_nodes:
+		if not is_instance_valid(w):
+			continue
+		if absf(w.global_position.y - global_position.y) < 1.8 and w.global_position.distance_to(global_position) < 1.55:
+			is_hidden = true
+			return
+
+
 func _process(delta):
+	if jumpscare_lock_active:
+		# Snap player head/camera dramatically toward the clown face during attack
+		var to_enemy: Vector3 = jumpscare_target_pos - camera.global_position
+		if to_enemy.length_squared() > 0.001:
+			var target_yaw: float = atan2(-to_enemy.x, -to_enemy.z)
+			head.global_rotation.y = lerp_angle(head.global_rotation.y, target_yaw, delta * 14.0)
+			var horiz: float = Vector2(to_enemy.x, to_enemy.z).length()
+			var target_pitch: float = atan2(to_enemy.y, maxf(horiz, 0.01))
+			camera.rotation.x = lerp_angle(camera.rotation.x, clampf(target_pitch, -0.7, 0.7), delta * 14.0)
+		camera_shake = maxf(camera_shake - delta * 0.7, 0.25)
+		camera.transform.origin = camera_base_pos + Vector3(
+			randf_range(-0.04, 0.04) * camera_shake,
+			randf_range(-0.04, 0.04) * camera_shake,
+			0.0
+		)
+		return
+
 	var want_pick = Input.is_action_just_pressed("F") or mobile_pick_pressed
 	var want_drop = Input.is_action_just_pressed("G") or mobile_drop_pressed
 	var want_interact = Input.is_action_just_pressed("E") or mobile_interact_pressed
 	mobile_pick_pressed = false
 	mobile_drop_pressed = false
 	mobile_interact_pressed = false
+
+	if trapped_timer > 0.0:
+		trapped_timer -= delta
+		if want_interact:
+			trapped_timer -= 0.7
+			_play_sfx("door_locked", -3.0, 1.15)
+		if trapped_timer <= 0.0:
+			trapped_timer = 0.0
+			_show_hint("Freed from Bear Trap!", 1.2)
 
 	if hint_timer > 0.0:
 		hint_timer -= delta
@@ -168,7 +325,6 @@ func _process(delta):
 		bx_bt.visible = false
 		return
 
-	# Clean up if held object was freed elsewhere
 	if picked and not is_instance_valid(detected):
 		picked = false
 		detected = null
@@ -203,10 +359,6 @@ func _process(delta):
 	else:
 		bx_bt.visible = false
 
-	# Priority UI + interactions:
-	# 1. Pickable item in reach
-	# 2. Boat escape (for_ship)
-	# 3. Doors / drawers / locks (interact)
 	var reach_col = reach.get_collider() if reach.is_colliding() else null
 	var ship_hit = for_ship.is_colliding()
 	var interact_col = interact.get_collider() if interact.is_colliding() else null
@@ -277,35 +429,38 @@ func _process(delta):
 
 
 func _physics_process(delta):
-	# Add the gravity.
+	if jumpscare_lock_active:
+		return
+
 	if not is_on_floor():
 		velocity.y -= gravity * delta
 
-	# Handle Jump.
+	if trapped_timer > 0.0:
+		velocity.x = lerp(velocity.x, 0.0, delta * 12.0)
+		velocity.z = lerp(velocity.z, 0.0, delta * 12.0)
+		camera_shake = maxf(camera_shake - delta * 1.5, 0.0)
+		camera.transform.origin = camera_base_pos + Vector3(
+			randf_range(-0.025, 0.025) * camera_shake,
+			randf_range(-0.025, 0.025) * camera_shake,
+			0.0
+		)
+		move_and_slide()
+		return
+
 	if Input.is_action_just_pressed("jump") and is_on_floor() and not crouched:
 		velocity.y = JUMP_VELOCITY
 
-	# Handle Sprint.
-	var is_sprinting = Input.is_action_pressed("sprint") and not crouched
-	if is_sprinting:
-		speed = SPRINT_SPEED
-	else:
-		speed = WALK_SPEED
-
-	# Handle Crouch.
+	# Crouch handling
 	var want_crouch = Input.is_action_pressed("crouch") or (is_touch_device and gt_bt.button_pressed)
 	if want_crouch:
 		standing_colide_shape.disabled = true
 		crouch_colide_shape.disabled = false
 		head.position.y = lerp(head.position.y, CROUCH_DEPTH, delta * 12.0)
-		speed = CROUCH_SPEED
 		crouched = true
 	elif crouched and crouch_raycast.is_colliding():
-		# Only stay crouched under low obstacles if already crouching
 		standing_colide_shape.disabled = true
 		crouch_colide_shape.disabled = false
 		head.position.y = lerp(head.position.y, CROUCH_DEPTH, delta * 12.0)
-		speed = CROUCH_SPEED
 		crouched = true
 	else:
 		head.position.y = lerp(head.position.y, STAND_HEIGHT, delta * 12.0)
@@ -313,9 +468,26 @@ func _physics_process(delta):
 		crouch_colide_shape.disabled = true
 		crouched = false
 
-	# Movement & deceleration
+	_update_wardrobe_hiding()
+
 	var input_dir = Input.get_vector("left", "right", "up", "down")
 	var direction = (head.transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
+
+	# Stamina & Sprint
+	var wants_sprint: bool = Input.is_action_pressed("sprint") and not crouched and direction.length() > 0.1
+	var is_sprinting: bool = wants_sprint and not stamina_exhausted and stamina > 0.5
+	if is_sprinting:
+		stamina = maxf(stamina - STAMINA_DRAIN * delta, 0.0)
+		if stamina <= 0.5:
+			stamina_exhausted = true
+			_show_hint("Out of breath!", 1.2)
+		speed = SPRINT_SPEED
+	else:
+		stamina = minf(stamina + STAMINA_REGEN * delta, MAX_STAMINA)
+		if stamina_exhausted and stamina >= 24.0:
+			stamina_exhausted = false
+		speed = CROUCH_SPEED if crouched else WALK_SPEED
+
 	if is_on_floor():
 		if direction:
 			velocity.x = direction.x * speed
@@ -347,11 +519,16 @@ func _physics_process(delta):
 		sprint_noise_timer = 0.0
 		walk_noise_timer = 0.0
 
-	# Head bob (preserve camera base offset!)
+	# Head bob + subtle camera shake
 	t_bob += delta * velocity.length() * float(is_on_floor())
-	camera.transform.origin = camera_base_pos + _headbob(t_bob)
+	camera_shake = maxf(camera_shake - delta * 2.0, 0.0)
+	var shake_vec: Vector3 = Vector3(
+		randf_range(-0.02, 0.02) * camera_shake,
+		randf_range(-0.02, 0.02) * camera_shake,
+		0.0
+	)
+	camera.transform.origin = camera_base_pos + _headbob(t_bob) + shake_vec
 
-	# FOV
 	var velocity_clamped = clamp(velocity.length(), 0.5, SPRINT_SPEED * 2)
 	var target_fov = BASE_FOV + FOV_CHANGE * velocity_clamped
 	camera.fov = lerp(camera.fov, target_fov, delta * 8.0)
@@ -376,7 +553,6 @@ func _on_timer_timeout() -> void:
 		if pending_unlock_target.has_method("interact"):
 			pending_unlock_target.interact()
 		if pending_unlock_target.get("pinreq") == true:
-			# Allow door_lock doors to open/close normally once lockpicked
 			pending_unlock_target.set("pinreq", false)
 		elif pending_unlock_target is CollisionObject3D:
 			pending_unlock_target.collision_layer = 1

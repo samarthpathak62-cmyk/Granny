@@ -42,6 +42,9 @@ const ANOMALY_SCAN_INTERVAL = 0.65
 const STUCK_CHECK_INTERVAL = 0.65
 const STUCK_MIN_DISTANCE = 0.16
 const GRAVITY = 9.8
+const BEAR_TRAP_SCRIPT = preload("res://scripts/bear_trap.gd")
+const MAX_ACTIVE_TRAPS = 3
+const TRAP_DROP_INTERVAL = 24.0
 
 @export var player_path: NodePath
 
@@ -103,9 +106,12 @@ var stuck_count: int = 0
 var sidestep_dir: Vector3 = Vector3.ZERO
 var sidestep_timer: float = 0.0
 
-# Audio timers
+# Audio timers & traps
 var clown_step_timer: float = 0.0
 var alert_sfx_cooldown: float = 0.0
+var time_since_last_seen: float = 999.0
+var trap_cooldown_timer: float = 12.0
+var active_traps: Array[Area3D] = []
 
 
 func _ready() -> void:
@@ -375,18 +381,24 @@ func _evaluate_vision() -> int:
 	# Returns: 0 = not visible, 1 = peripheral glimpse, 2 = clear core/proximity sight
 	if player == null or not is_instance_valid(player):
 		return 0
+	var is_player_hidden: bool = player.get("is_hidden") == true
+	if is_player_hidden and time_since_last_seen > 3.0:
+		return 0
+
 	var to_player: Vector3 = player.global_position - global_position
 	var dist: float = to_player.length()
 	if absf(to_player.y) > 6.0:
 		return 0
 
 	var crouched: bool = _is_player_crouched()
+	var light_on: bool = player.get("flashlight_on") != false
+	var light_mult: float = 1.0 if light_on else 0.72
 	var prox_range: float = CROUCH_PROXIMITY_RANGE if (crouched and smoothed_player_vel.length() < 0.4) else PROXIMITY_SENSE_RANGE
 	if dist <= prox_range:
 		return 2 if _has_line_of_sight_to_player() else 0
 
-	var core_range: float = CORE_VISION_RANGE * (CROUCH_VISION_MULT if crouched else 1.0)
-	var periph_range: float = PERIPHERAL_VISION_RANGE * (CROUCH_VISION_MULT if crouched else 1.0)
+	var core_range: float = CORE_VISION_RANGE * (CROUCH_VISION_MULT if crouched else 1.0) * light_mult
+	var periph_range: float = PERIPHERAL_VISION_RANGE * (CROUCH_VISION_MULT if crouched else 1.0) * light_mult
 	if dist > core_range:
 		return 0
 
@@ -554,6 +566,8 @@ func _trigger_attack() -> void:
 
 	if is_instance_valid(player):
 		look_at(Vector3(player.global_position.x, global_position.y, player.global_position.z), Vector3.UP)
+		if player.has_method("force_look_at_enemy"):
+			player.force_look_at_enemy(global_position + Vector3(0.0, 1.55, 0.0))
 		player.set_physics_process(false)
 		player.set_process_input(false)
 		player.set_process_unhandled_input(false)
@@ -608,8 +622,12 @@ func _physics_process(delta: float) -> void:
 
 	_update_player_velocity(delta)
 	state_timer += delta
+	time_since_last_seen += delta
 	if alert_sfx_cooldown > 0.0:
 		alert_sfx_cooldown -= delta
+
+	# Periodically drop Granny-style Bear Traps while patrolling/hunting
+	_update_trap_placement(delta)
 
 	# Dynamic tension / heartbeat feedback for AudioManager
 	if has_node("/root/AudioManager"):
@@ -640,6 +658,7 @@ func _physics_process(delta: float) -> void:
 	var dist_to_player: float = global_position.distance_to(player.global_position)
 
 	if vision == 2:
+		time_since_last_seen = 0.0
 		last_known_player_pos = _closest_nav_point(player.global_position)
 		last_known_player_vel = smoothed_player_vel
 		_add_heat_near(player.global_position, delta * 2.5)
@@ -876,3 +895,50 @@ func _hit_finished() -> void:
 		var dir: Vector3 = global_position.direction_to(player.global_position)
 		if player.has_method("hit"):
 			player.hit(dir)
+
+
+func _update_trap_placement(delta: float) -> void:
+	for i in range(active_traps.size() - 1, -1, -1):
+		if not is_instance_valid(active_traps[i]):
+			active_traps.remove_at(i)
+	if not is_on_floor() or active_traps.size() >= MAX_ACTIVE_TRAPS:
+		return
+	if ai_state != AIState.PATROL and ai_state != AIState.INVESTIGATE and ai_state != AIState.SEARCH:
+		return
+	trap_cooldown_timer -= delta
+	if trap_cooldown_timer <= 0.0:
+		trap_cooldown_timer = TRAP_DROP_INTERVAL
+		if is_instance_valid(player) and global_position.distance_to(player.global_position) < 3.5:
+			return
+		var trap_pos: Vector3 = _closest_nav_point(global_position)
+		for t in active_traps:
+			if t.global_position.distance_to(trap_pos) < 4.0:
+				return
+		var trap := Area3D.new()
+		trap.set_script(BEAR_TRAP_SCRIPT)
+		var scene_root: Node = get_tree().current_scene
+		if scene_root:
+			scene_root.add_child(trap)
+			trap.global_position = trap_pos
+			active_traps.append(trap)
+			if has_node("/root/AudioManager"):
+				get_node("/root/AudioManager").play_sfx_3d("door_locked", trap_pos, -4.5, 0.8, 16.0)
+
+
+func reset_for_new_day(day: int) -> void:
+	is_attacking = false
+	kill_emitted = false
+	suspicion = 0.0
+	time_since_last_seen = 999.0
+	aggression = clampf(0.15 + float(day - 1) * 0.14, 0.15, 0.9)
+	velocity = Vector3.ZERO
+	stuck_count = 0
+	sidestep_timer = 0.0
+	wait_timer = 0.5
+	if anim_tree:
+		anim_tree.set("parameters/conditions/attack", false)
+		anim_tree.set("parameters/conditions/run", true)
+	if state_machine and state_machine.has_method("travel"):
+		state_machine.travel("Run")
+	_set_state(AIState.PATROL)
+	_pick_next_patrol_point()
