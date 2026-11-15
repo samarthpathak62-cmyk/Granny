@@ -155,7 +155,7 @@ size_flags_vertical = 4
 layout_mode = 2
 theme_override_fonts/font = ExtResource("2_fxwjj")
 theme_override_font_sizes/font_size = 70
-text = "Fullsceen"
+text = "Fullscreen"
 
 [node name="VSync" type="Label" parent="graphics/HBoxContainer/Labels"]
 layout_mode = 2
@@ -217,24 +217,21 @@ layout_mode = 2
 size_flags_vertical = 6
 theme_override_fonts/font = ExtResource("2_fxwjj")
 theme_override_font_sizes/font_size = 70
-text = "Master
-"
+text = "Master"
 
 [node name="Music" type="Label" parent="Audio/HBoxContainer/Labels"]
 layout_mode = 2
 size_flags_vertical = 6
 theme_override_fonts/font = ExtResource("2_fxwjj")
 theme_override_font_sizes/font_size = 70
-text = "music
-"
+text = "Music"
 
 [node name="Sound Fx" type="Label" parent="Audio/HBoxContainer/Labels"]
 layout_mode = 2
 size_flags_vertical = 6
 theme_override_fonts/font = ExtResource("2_fxwjj")
 theme_override_font_sizes/font_size = 70
-text = "sound fx
-"
+text = "Sound FX"
 
 [node name="slider" type="VBoxContainer" parent="Audio/HBoxContainer"]
 layout_mode = 2
@@ -245,14 +242,23 @@ theme_override_constants/separation = 70
 [node name="master" type="HSlider" parent="Audio/HBoxContainer/slider"]
 layout_mode = 2
 size_flags_vertical = 6
+max_value = 1.0
+step = 0.05
+value = 1.0
 
 [node name="music" type="HSlider" parent="Audio/HBoxContainer/slider"]
 layout_mode = 2
 size_flags_vertical = 6
+max_value = 1.0
+step = 0.05
+value = 1.0
 
 [node name="sound fx" type="HSlider" parent="Audio/HBoxContainer/slider"]
 layout_mode = 2
 size_flags_vertical = 6
+max_value = 1.0
+step = 0.05
+value = 1.0
 
 [node name="backfromAudio" type="Button" parent="Audio"]
 z_index = 3

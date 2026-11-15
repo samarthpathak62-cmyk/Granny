@@ -1,6 +1,9 @@
 extends Control
 
+
 func _ready():
+	get_tree().paused = false
+	Engine.time_scale = 1.0
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 

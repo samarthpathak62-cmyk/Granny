@@ -90,7 +90,7 @@ margin = 0.2
 height = 0.372409
 radius = 0.0364328
 
-[node name="old_key" type="RigidBody3D"]
+[node name="lockpin" type="RigidBody3D"]
 collision_layer = 8
 collision_mask = 5
 script = ExtResource("1_igqqk")

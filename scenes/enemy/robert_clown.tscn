@@ -897,6 +897,7 @@ tracks/92/keys = PackedFloat32Array(0, 1, 5.03589e-07, 3.176, 1.55692e-05)
 [sub_resource type="Animation" id="Animation_ok63w"]
 resource_name = "Run"
 length = 0.916667
+loop_mode = 1
 tracks/0/type = "position_3d"
 tracks/0/imported = true
 tracks/0/enabled = true
@@ -1559,10 +1560,10 @@ _data = {
 radius = 0.280017
 
 [sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_rxxo6"]
-animation = &"attack"
+animation = &"Attack"
 
 [sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_s81qn"]
-animation = &"walk"
+animation = &"Run"
 
 [sub_resource type="AnimationNodeStateMachineTransition" id="AnimationNodeStateMachineTransition_oww78"]
 advance_mode = 2
@@ -2080,10 +2081,13 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0.0612602)
 shape = SubResource("CapsuleShape3D_mg23c")
 
 [node name="NavigationAgent3D" type="NavigationAgent3D" parent="."]
+path_desired_distance = 0.6
+target_desired_distance = 0.8
 path_height_offset = 0.15
 
 [node name="AnimationTree" type="AnimationTree" parent="."]
 tree_root = SubResource("AnimationNodeStateMachine_kvpns")
 anim_player = NodePath("../AnimationPlayer")
+active = true
 parameters/conditions/attack = false
 parameters/conditions/run = false

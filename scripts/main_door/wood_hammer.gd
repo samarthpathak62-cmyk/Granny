@@ -1,23 +1,24 @@
 extends StaticBody3D
 
-var keyreq =false
-var opened=false
+var keyreq = false
+var opened = false
 var beatreq = true
 var beatname = "hammer"
-signal beaten(bool)
+var pinreq = false
+signal beaten(is_done: bool)
 var yes = true
-# Called when the node enters the scene tree for the first time.
-func _ready():
-	pass # Replace with function body.
+@onready var col: CollisionShape3D = $CollisionShape3D
 
 
-# Called every frame. 'delta' is the elapsed time since the previous frame.
-func _process(delta):
+func _process(_delta):
 	if opened:
 		hide()
 
+
 func interact():
-	if !opened:
-		opened = !opened
-	beaten.emit(yes)
-	
+	if not opened:
+		opened = true
+		if col:
+			col.disabled = true
+		collision_layer = 1
+		beaten.emit(yes)

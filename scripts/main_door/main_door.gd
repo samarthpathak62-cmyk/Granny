@@ -3,24 +3,30 @@ extends StaticBody3D
 var monster_key = false
 var wooden_hammer = false
 var final = false
-# Called when the node enters the scene tree for the first time.
+
+
 func _ready():
-	pass # Replace with function body.
+	pass
 
 
-# Called every frame. 'delta' is the elapsed time since the previous frame.
-func _process(delta):
-	if monster_key == true && wooden_hammer == true && final == true:
+func _process(_delta):
+	if monster_key and wooden_hammer and final:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		get_tree().change_scene_to_file("res://scenes/game_over.tscn")
 
 
-func _on_need_monster_key_monster_done(bool):
+func _on_need_monster_key_monster_done(_is_done):
 	monster_key = true
 
 
-func _on_wood_hammer_beaten(bool):
+func _on_wood_hammer_beaten(_is_done):
 	wooden_hammer = true
 
 
-func _on_openz_all_locks_all_done(bool):
-	final = true
+func _on_openz_all_locks_all_done(_is_done):
+	if monster_key and wooden_hammer:
+		final = true
+	else:
+		var player = get_tree().get_first_node_in_group("player")
+		if player and player.has_method("_show_hint"):
+			player._show_hint("REMOVE ALL LOCKS FIRST")

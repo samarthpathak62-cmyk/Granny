@@ -4,9 +4,15 @@ var opened = false
 
 var keyreq = true
 var keyname = "grid_key"
+var beatreq = false
+var pinreq = false
+
+
 func _process(delta):
 	if opened:
-		grid_gate.rotation.y = lerp_angle(grid_gate.rotation.y , rad_to_deg(0.0) , delta * 2)
+		grid_gate.rotation.y = lerp_angle(grid_gate.rotation.y, deg_to_rad(0.0), delta * 2)
+
+
 func interact():
-	if !opened:
-		opened = !opened
+	if not opened:
+		opened = true
