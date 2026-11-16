@@ -11,6 +11,9 @@ var current_day: int = 1
 var transitioning_day: bool = false
 var player_spawn_transform: Transform3D
 var enemy_spawn_transform: Transform3D
+var dark_mode_enabled: bool = false
+var diff_name: String = "NORMAL"
+var diff_color: Color = Color(0.95, 0.85, 0.42)
 
 # PSX Retro Shader
 var psx_layer: CanvasLayer = null
@@ -26,6 +29,7 @@ var fade_rect: ColorRect = null
 var day_banner_label: Label = null
 var day_sub_label: Label = null
 var day_hud_label: Label = null
+var mode_hud_label: Label = null
 var item_hud_label: Label = null
 var stealth_hud_label: Label = null
 var stamina_bar: ProgressBar = null
@@ -39,6 +43,12 @@ func _ready() -> void:
 	if pausemenu:
 		pausemenu.hide()
 
+	if has_node("/root/GameSettings"):
+		var gs = get_node("/root/GameSettings")
+		dark_mode_enabled = bool(gs.dark_mode)
+		diff_name = str(gs.get_difficulty_name())
+		diff_color = gs.get_difficulty_color()
+
 	if player_node == null:
 		player_node = get_tree().get_first_node_in_group("player") as Node3D
 	if enemy_node == null:
@@ -51,21 +61,50 @@ func _ready() -> void:
 	if enemy_node:
 		enemy_spawn_transform = enemy_node.global_transform
 
-	_enhance_horror_environment()
+	_apply_lighting_mode()
 	_build_psx_postprocess()
 	_build_granny_hud()
-	_show_day_intro(current_day, "Escape via the Main Door or Boat. Crouch [C] to stay silent!")
+	_show_day_intro(current_day, "%s MODE%s — Escape via Main Door or Boat!" % [
+		diff_name,
+		" (DARK)" if dark_mode_enabled else ""
+	])
 
 
-func _enhance_horror_environment() -> void:
+func _apply_lighting_mode() -> void:
 	var world_env: WorldEnvironment = find_child("WorldEnvironment", true, false) as WorldEnvironment
-	if world_env and world_env.environment:
-		var env: Environment = world_env.environment
-		env.fog_enabled = true
-		env.fog_light_color = Color(0.05, 0.06, 0.08, 1.0)
-		env.fog_light_energy = 0.65
-		env.fog_density = 0.042
-		env.ambient_light_energy = 0.35
+	var env: Environment = null
+	if world_env:
+		if world_env.environment == null:
+			world_env.environment = Environment.new()
+		env = world_env.environment
+
+	if dark_mode_enabled:
+		if env:
+			env.fog_enabled = true
+			env.fog_light_color = Color(0.03, 0.04, 0.06, 1.0)
+			env.fog_light_energy = 0.55
+			env.fog_density = 0.055
+			env.background_energy_multiplier = 0.08
+			env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+			env.ambient_light_color = Color(0.18, 0.20, 0.24, 1.0)
+			env.ambient_light_energy = 0.16
+	else:
+		# Classic Granny Normal Visibility: everything inside the house clearly visible without darkness
+		if env:
+			env.fog_enabled = false
+			env.background_energy_multiplier = 1.0
+			env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+			env.ambient_light_color = Color(0.84, 0.82, 0.78, 1.0)
+			env.ambient_light_energy = 1.25
+
+		if get_node_or_null("NormalModeFillLight") == null:
+			var fill := DirectionalLight3D.new()
+			fill.name = "NormalModeFillLight"
+			fill.light_color = Color(1.0, 0.96, 0.90)
+			fill.light_energy = 0.45
+			fill.shadow_enabled = false
+			fill.rotation_degrees = Vector3(-48.0, 35.0, 0.0)
+			add_child(fill)
 
 
 func _build_psx_postprocess() -> void:
@@ -82,11 +121,13 @@ func _build_psx_postprocess() -> void:
 shader_type canvas_item;
 
 uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_nearest;
-uniform vec2 target_resolution = vec2(480.0, 270.0);
-uniform float color_levels = 32.0;
-uniform float dither_strength = 0.75;
-uniform float scanline_strength = 0.08;
+uniform vec2 target_resolution = vec2(640.0, 360.0);
+uniform float color_levels = 48.0;
+uniform float dither_strength = 0.35;
+uniform float scanline_strength = 0.03;
+uniform float chroma_base = 0.0002;
 uniform float terror_chroma = 0.0;
+uniform float dark_vignette = 0.0;
 
 float bayer4(vec2 p) {
 	int x = int(mod(p.x, 4.0));
@@ -105,7 +146,7 @@ void fragment() {
 	vec2 pixel_pos = floor(SCREEN_UV * target_resolution);
 	vec2 snapped_uv = (pixel_pos + 0.5) / target_resolution;
 
-	float chroma_off = (0.0006 + terror_chroma * 0.0028) * length(SCREEN_UV - 0.5);
+	float chroma_off = (chroma_base + terror_chroma * (chroma_base * 6.0 + 0.0022)) * length(SCREEN_UV - 0.5);
 	float r = texture(screen_texture, snapped_uv + vec2(chroma_off, 0.0)).r;
 	float g = texture(screen_texture, snapped_uv).g;
 	float b = texture(screen_texture, snapped_uv - vec2(chroma_off, 0.0)).b;
@@ -120,11 +161,34 @@ void fragment() {
 	float scan = 1.0 - scanline_strength * (0.5 + 0.5 * sin(pixel_pos.y * 3.14159265));
 	col *= scan;
 
+	// Extra PSX horror edge crush in Dark Mode
+	if (dark_vignette > 0.001) {
+		float edge = smoothstep(0.35, 1.05, length(SCREEN_UV - 0.5) * 1.4142);
+		col *= (1.0 - edge * dark_vignette);
+	}
+
 	COLOR = vec4(col, 1.0);
 }
 """
 	psx_mat = ShaderMaterial.new()
 	psx_mat.shader = psx_shader
+	if dark_mode_enabled:
+		# EXTREME gritty PSX horror shader in Dark Mode
+		psx_mat.set_shader_parameter("target_resolution", Vector2(340.0, 192.0))
+		psx_mat.set_shader_parameter("color_levels", 18.0)
+		psx_mat.set_shader_parameter("dither_strength", 1.25)
+		psx_mat.set_shader_parameter("scanline_strength", 0.16)
+		psx_mat.set_shader_parameter("chroma_base", 0.0014)
+		psx_mat.set_shader_parameter("dark_vignette", 0.28)
+	else:
+		# Normal clean PSX shader when Dark Mode is OFF
+		psx_mat.set_shader_parameter("target_resolution", Vector2(640.0, 360.0))
+		psx_mat.set_shader_parameter("color_levels", 48.0)
+		psx_mat.set_shader_parameter("dither_strength", 0.35)
+		psx_mat.set_shader_parameter("scanline_strength", 0.03)
+		psx_mat.set_shader_parameter("chroma_base", 0.0002)
+		psx_mat.set_shader_parameter("dark_vignette", 0.0)
+
 	psx_rect.material = psx_mat
 	psx_rect.visible = psx_enabled
 	psx_layer.add_child(psx_rect)
@@ -147,11 +211,12 @@ func _build_granny_hud() -> void:
 shader_type canvas_item;
 uniform float intensity : hint_range(0.0, 1.0) = 0.0;
 uniform float flash : hint_range(0.0, 1.0) = 0.0;
+uniform float base_dark : hint_range(0.0, 1.0) = 0.55;
 void fragment() {
 	vec2 uv = UV - vec2(0.5);
 	float dist = length(uv) * 1.4142;
 	float edge = smoothstep(0.32, 1.05, dist);
-	float dark_vig = edge * 0.55;
+	float dark_vig = edge * base_dark;
 	float red_vig = edge * intensity * 0.78 + flash * 0.55;
 	vec3 col = mix(vec3(0.0, 0.0, 0.0), vec3(0.68, 0.02, 0.02), clamp(red_vig / max(dark_vig + red_vig, 0.001), 0.0, 1.0));
 	COLOR = vec4(col, clamp(dark_vig + red_vig, 0.0, 0.92));
@@ -159,6 +224,7 @@ void fragment() {
 """
 	vignette_mat = ShaderMaterial.new()
 	vignette_mat.shader = shader
+	vignette_mat.set_shader_parameter("base_dark", 0.62 if dark_mode_enabled else 0.14)
 	vignette_rect.material = vignette_mat
 	hud_layer.add_child(vignette_rect)
 
@@ -175,6 +241,14 @@ void fragment() {
 	day_hud_label.add_theme_font_size_override("font_size", 32)
 	day_hud_label.add_theme_color_override("font_color", Color(0.88, 0.16, 0.16))
 	top_box.add_child(day_hud_label)
+
+	mode_hud_label = Label.new()
+	mode_hud_label.text = "%s%s" % [diff_name, " • DARK MODE" if dark_mode_enabled else ""]
+	if ui_font:
+		mode_hud_label.add_theme_font_override("font", ui_font)
+	mode_hud_label.add_theme_font_size_override("font_size", 19)
+	mode_hud_label.add_theme_color_override("font_color", diff_color)
+	top_box.add_child(mode_hud_label)
 
 	stealth_hud_label = Label.new()
 	stealth_hud_label.text = ""
@@ -193,12 +267,15 @@ void fragment() {
 	top_box.add_child(item_hud_label)
 
 	var controls_hint := Label.new()
-	controls_hint.text = "[WASD] Move  [Shift] Sprint  [C] Crouch/Hide  [F/G] Pick/Drop  [E] Interact  [T/RMB] Light  [F3] PSX"
+	if dark_mode_enabled:
+		controls_hint.text = "[WASD] Move  [Shift] Sprint  [C] Crouch/Hide  [F/G] Pick/Drop  [E] Interact  [T/RMB] Torch  [F3] PSX"
+	else:
+		controls_hint.text = "[WASD] Move  [Shift] Sprint  [C] Crouch/Hide  [F/G] Pick/Drop  [E] Interact  [F3] PSX"
 	controls_hint.add_theme_font_size_override("font_size", 14)
-	controls_hint.add_theme_color_override("font_color", Color(0.75, 0.75, 0.75, 0.72))
+	controls_hint.add_theme_color_override("font_color", Color(0.82, 0.82, 0.82, 0.78))
 	controls_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	controls_hint.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	controls_hint.offset_left = -840
+	controls_hint.offset_left = -880
 	controls_hint.offset_top = 20
 	controls_hint.offset_right = -24
 	controls_hint.offset_bottom = 48
@@ -229,8 +306,8 @@ void fragment() {
 
 	var banner_box := VBoxContainer.new()
 	banner_box.set_anchors_preset(Control.PRESET_CENTER)
-	banner_box.offset_left = -360
-	banner_box.offset_right = 360
+	banner_box.offset_left = -380
+	banner_box.offset_right = 380
 	banner_box.offset_top = -110
 	banner_box.offset_bottom = 110
 	banner_box.alignment = BoxContainer.ALIGNMENT_CENTER

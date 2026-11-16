@@ -1,50 +1,12 @@
 extends CharacterBody3D
 
-enum AIState {
-	PATROL,
-	STALK,
-	INVESTIGATE,
-	SEARCH,
-	AMBUSH,
-	CHASE,
-	DOOR_BREACH,
-	ATTACK,
-}
-
-# Movement speeds (scale dynamically with aggression)
-const BASE_PATROL_SPEED = 2.45
-const STALK_SPEED = 2.7
-const INVESTIGATE_SPEED = 3.5
-const SEARCH_SPEED = 2.8
-const AMBUSH_SPEED = 4.6
-const BASE_CHASE_SPEED = 4.5
-const MAX_CHASE_BONUS = 0.65
-
-# Combat & perception tuning
-const ATTACK_RANGE = 1.5
-const ATTACK_VERTICAL_RANGE = 1.65
-const CORE_VISION_RANGE = 20.0
-const CORE_VISION_HALF_ANGLE_DEG = 34.0
-const PERIPHERAL_VISION_RANGE = 14.0
-const PERIPHERAL_HALF_ANGLE_DEG = 76.0
-const CROUCH_VISION_MULT = 0.62
-const PROXIMITY_SENSE_RANGE = 2.8
-const CROUCH_PROXIMITY_RANGE = 1.65
-
-# Tactical timing
-const BASE_CHASE_MEMORY_TIME = 4.2
-const INVESTIGATE_WAIT_TIME = 2.2
-const PATROL_WAIT_TIME = 0.85
-const AMBUSH_WAIT_TIME = 2.4
-const DOOR_BREACH_PAUSE = 0.25
-const DOOR_CHECK_INTERVAL = 0.14
-const ANOMALY_SCAN_INTERVAL = 0.65
-const STUCK_CHECK_INTERVAL = 0.65
-const STUCK_MIN_DISTANCE = 0.16
-const GRAVITY = 9.8
+const ATTACK_RANGE: float = 1.5
+const ATTACK_VERTICAL_RANGE: float = 1.65
+const DOOR_CHECK_INTERVAL: float = 0.14
+const STUCK_CHECK_INTERVAL: float = 0.65
+const STUCK_MIN_DISTANCE: float = 0.18
+const GRAVITY: float = 9.8
 const BEAR_TRAP_SCRIPT = preload("res://scripts/bear_trap.gd")
-const MAX_ACTIVE_TRAPS = 3
-const TRAP_DROP_INTERVAL = 24.0
 
 @export var player_path: NodePath
 
@@ -57,14 +19,13 @@ signal ai_state_changed(state_name: String, suspicion_value: float)
 
 var player: Node3D = null
 var state_machine = null
-var ai_state: AIState = AIState.PATROL
-var last_emitted_state: int = -1
+var ai_brain: Node = null
 var ai_ready: bool = false
 var is_attacking: bool = false
 var kill_emitted: bool = false
 var death: bool = true
 
-# Cognitive memory, multi-floor patrol & spatial heat-map
+# Multi-floor patrol & spatial heat-map
 var patrol_points: Array[Vector3] = []
 var patrol_floors: Array[int] = []
 var zone_heat: Array[float] = []
@@ -76,48 +37,29 @@ var current_patrol_idx: int = -1
 var current_target_pos: Vector3 = Vector3.ZERO
 var nav_bridges_built: bool = false
 
-# Player tracking & prediction
-var last_known_player_pos: Vector3 = Vector3.ZERO
-var last_known_player_vel: Vector3 = Vector3.ZERO
+# Player velocity tracking
 var prev_player_pos: Vector3 = Vector3.ZERO
 var smoothed_player_vel: Vector3 = Vector3.ZERO
 var has_prev_player_pos: bool = false
 
-# Suspicion, aggression & timers
-var suspicion: float = 0.0
-var aggression: float = 0.15
-var lose_sight_timer: float = 0.0
-var wait_timer: float = 0.0
-var state_timer: float = 0.0
-var stalk_freeze_timer: float = 0.0
-var door_breach_timer: float = 0.0
-var post_breach_state: AIState = AIState.PATROL
-var last_noise_priority: float = 0.0
-
-# Multi-point search sweep
-var search_waypoints: Array[Vector3] = []
-var search_step_idx: int = 0
-
-# Environmental forensics (door tampering + locked door avoidance)
+# Doors & obstacle avoidance
 var door_memory: Dictionary = {}
 var blocked_doors: Array[Dictionary] = []
-var anomaly_scan_timer: float = 0.0
 var door_check_timer: float = 0.0
-
-# Anti-stuck recovery
 var stuck_check_timer: float = 0.0
 var last_stuck_check_pos: Vector3 = Vector3.ZERO
 var stuck_count: int = 0
 var sidestep_dir: Vector3 = Vector3.ZERO
 var sidestep_timer: float = 0.0
 
-# Audio timers & traps
+# Audio & traps
 var clown_step_timer: float = 0.0
 var alert_sfx_cooldown: float = 0.0
 var hum_timer: float = 4.0
-var time_since_last_seen: float = 999.0
-var trap_cooldown_timer: float = 12.0
+var trap_cooldown_timer: float = 14.0
 var active_traps: Array[Area3D] = []
+var max_active_traps: int = 2
+var trap_drop_interval: float = 36.0
 
 
 func _ready() -> void:
@@ -129,8 +71,37 @@ func _ready() -> void:
 	if anim_tree:
 		anim_tree.active = true
 		state_machine = anim_tree.get("parameters/playback")
+	if nav_agent:
+		nav_agent.path_desired_distance = 0.70
+		nav_agent.target_desired_distance = 0.90
 	last_stuck_check_pos = global_position
+	_load_difficulty_brain()
 	call_deferred("_init_ai")
+
+
+func _load_difficulty_brain() -> void:
+	if ai_brain and is_instance_valid(ai_brain):
+		ai_brain.queue_free()
+		ai_brain = null
+
+	var script_path: String = "res://scripts/enemy_clown/ai_normal.gd"
+	if has_node("/root/GameSettings"):
+		script_path = str(get_node("/root/GameSettings").get_difficulty_script_path())
+
+	var brain_script: Script = load(script_path) as Script
+	if brain_script == null:
+		brain_script = load("res://scripts/enemy_clown/ai_normal.gd") as Script
+
+	ai_brain = Node.new()
+	ai_brain.name = "AIBrain"
+	ai_brain.set_script(brain_script)
+	add_child(ai_brain)
+
+	if ai_brain.has_method("get_trap_config"):
+		var cfg: Dictionary = ai_brain.get_trap_config()
+		max_active_traps = int(cfg.get("max_traps", 2))
+		trap_drop_interval = float(cfg.get("interval", 36.0))
+		trap_cooldown_timer = minf(trap_drop_interval * 0.55, 16.0)
 
 
 func _init_ai() -> void:
@@ -155,8 +126,8 @@ func _init_ai() -> void:
 
 	_build_patrol_points()
 	ai_ready = true
-	_set_state(AIState.PATROL)
-	_pick_next_patrol_point()
+	if ai_brain and ai_brain.has_method("setup"):
+		ai_brain.setup(self)
 
 
 func _get_floor_band(y_val: float) -> int:
@@ -169,6 +140,23 @@ func _get_floor_band(y_val: float) -> int:
 	return 3      # Attic / Upper Floor
 
 
+func _is_bridge_clear_of_walls(a: Vector3, b: Vector3) -> bool:
+	if absf(a.y - b.y) > 2.35:
+		return false
+	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+	var p1: Vector3 = a + Vector3(0.0, 0.95, 0.0)
+	var p2: Vector3 = b + Vector3(0.0, 0.95, 0.0)
+	var q: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(p1, p2)
+	q.exclude = [get_rid()]
+	q.collision_mask = 1
+	var hit: Dictionary = space_state.intersect_ray(q)
+	if hit.is_empty():
+		return true
+	# Allow bridging through an openable door panel, reject solid house walls!
+	var col = hit.get("collider")
+	return _resolve_door_interact_node(col) != null
+
+
 func _bridge_navmesh_islands() -> void:
 	var nav_region := get_parent() as NavigationRegion3D
 	if nav_region == null or nav_region.navigation_mesh == null:
@@ -179,7 +167,6 @@ func _bridge_navmesh_islands() -> void:
 	if verts.is_empty() or poly_count == 0:
 		return
 
-	# Quantize vertices to detect connected polygon islands
 	var adj: Dictionary = {}
 	var coord_map: Dictionary = {}
 	for i in range(poly_count):
@@ -222,7 +209,6 @@ func _bridge_navmesh_islands() -> void:
 
 	islands.sort_custom(func(a, b) -> bool: return a.size() > b.size())
 
-	# Iteratively bridge disconnected floor/room islands to the connected main graph
 	var connected_pts: Array[Vector3] = []
 	for p in islands[0]:
 		connected_pts.append(p as Vector3)
@@ -244,11 +230,11 @@ func _bridge_navmesh_islands() -> void:
 				var pva: Vector3 = pa as Vector3
 				for pb in connected_pts:
 					var d: float = pva.distance_to(pb)
-					if d < best_dist:
+					if d < best_dist and d <= 2.85 and _is_bridge_clear_of_walls(pva, pb):
 						best_dist = d
 						best_a = pva
 						best_b = pb
-			if best_dist <= 3.2:
+			if best_dist <= 2.85:
 				var link := NavigationLink3D.new()
 				link.bidirectional = true
 				link.navigation_layers = 1
@@ -260,7 +246,7 @@ func _bridge_navmesh_islands() -> void:
 				link.end_position = nav_region.to_local(best_b)
 				link_count += 1
 				for p in isl:
-					connected_pts.append(p)
+					connected_pts.append(p as Vector3)
 				pending_islands.remove_at(idx)
 				made_progress = true
 
@@ -278,7 +264,6 @@ func _snapshot_world_doors() -> void:
 			if opened_val is bool:
 				var id: int = node.get_instance_id()
 				var pos: Vector3 = (node as Node3D).global_position
-				# Find associated door leaf PhysicsBody3D (parent of door_lock, or self)
 				var door_body: PhysicsBody3D = null
 				var door_ref = node.get("door")
 				if door_ref is PhysicsBody3D:
@@ -305,7 +290,7 @@ func _build_patrol_points() -> void:
 	zone_last_visited.clear()
 
 	var nav_map: RID = nav_agent.get_navigation_map()
-	var start_nav: Vector3 = _closest_nav_point(global_position)
+	var start_nav: Vector3 = closest_nav_point(global_position)
 	var nav_region := get_parent() as NavigationRegion3D
 	var candidates: Array[Vector3] = []
 
@@ -323,9 +308,8 @@ func _build_patrol_points() -> void:
 			if not too_close:
 				candidates.append(world_v)
 
-	# Reachability filter across bridged navmesh
 	for cand in candidates:
-		var snapped: Vector3 = _closest_nav_point(cand)
+		var snapped: Vector3 = closest_nav_point(cand)
 		if nav_map.is_valid():
 			var path: PackedVector3Array = NavigationServer3D.map_get_path(nav_map, start_nav, snapped, true)
 			if path.is_empty():
@@ -341,7 +325,7 @@ func _build_patrol_points() -> void:
 	if patrol_points.is_empty():
 		for angle_deg in [0, 60, 120, 180, 240, 300]:
 			var rad: float = deg_to_rad(float(angle_deg))
-			var fallback_pt: Vector3 = _closest_nav_point(
+			var fallback_pt: Vector3 = closest_nav_point(
 				global_position + Vector3(cos(rad) * 5.5, 0.0, sin(rad) * 5.5)
 			)
 			patrol_points.append(fallback_pt)
@@ -356,16 +340,40 @@ func notify_world_changed() -> void:
 
 
 func notify_player_progress(amount: float = 0.14) -> void:
-	aggression = clampf(aggression + amount, 0.0, 1.0)
+	if ai_brain and ai_brain.has_method("on_player_progress"):
+		ai_brain.on_player_progress(amount)
 	if is_instance_valid(player):
-		_add_heat_near(player.global_position, 2.2)
+		add_heat_near(player.global_position, 2.2)
 
 
-func _closest_nav_point(world_pos: Vector3) -> Vector3:
+func closest_nav_point(world_pos: Vector3) -> Vector3:
 	var nav_map: RID = nav_agent.get_navigation_map()
 	if nav_map.is_valid():
 		return NavigationServer3D.map_get_closest_point(nav_map, world_pos)
 	return world_pos
+
+
+func set_nav_target(target_pos: Vector3) -> void:
+	current_target_pos = target_pos
+	if nav_agent:
+		nav_agent.set_target_position(target_pos)
+
+
+func is_nav_finished() -> bool:
+	if nav_agent == null:
+		return true
+	return nav_agent.is_navigation_finished()
+
+
+func emit_ai_state(state_name: String, suspicion_val: float) -> void:
+	ai_state_changed.emit(state_name, suspicion_val)
+
+
+func play_alert_sfx() -> void:
+	if alert_sfx_cooldown <= 0.0:
+		alert_sfx_cooldown = 4.5
+		if has_node("/root/AudioManager"):
+			get_node("/root/AudioManager").play_sfx_3d("clown_alert", global_position, 2.0, randf_range(0.95, 1.06), 28.0)
 
 
 func _is_position_blocked(pos: Vector3) -> bool:
@@ -381,7 +389,14 @@ func _is_position_blocked(pos: Vector3) -> bool:
 	return false
 
 
-func _add_heat_near(world_pos: Vector3, amount: float) -> void:
+func _mark_temp_blocked(pos: Vector3, duration: float) -> void:
+	blocked_doors.append({
+		"pos": pos,
+		"until": Time.get_ticks_msec() * 0.001 + duration,
+	})
+
+
+func add_heat_near(world_pos: Vector3, amount: float) -> void:
 	for i in range(patrol_points.size()):
 		var d: float = patrol_points[i].distance_to(world_pos)
 		if d < 12.0:
@@ -389,23 +404,7 @@ func _add_heat_near(world_pos: Vector3, amount: float) -> void:
 			zone_heat[i] = clampf(zone_heat[i] + amount * falloff, 0.0, 6.0)
 
 
-func _set_state(new_state: AIState) -> void:
-	if ai_state == new_state:
-		return
-	var prev_state: AIState = ai_state
-	ai_state = new_state
-	state_timer = 0.0
-	if ai_state == AIState.CHASE and prev_state != AIState.CHASE and alert_sfx_cooldown <= 0.0:
-		alert_sfx_cooldown = 4.5
-		if has_node("/root/AudioManager"):
-			get_node("/root/AudioManager").play_sfx_3d("clown_alert", global_position, 2.0, randf_range(0.95, 1.06), 28.0)
-	if int(ai_state) != last_emitted_state:
-		last_emitted_state = int(ai_state)
-		var names: Array[String] = ["PATROL", "STALK", "INVESTIGATE", "SEARCH", "AMBUSH", "CHASE", "DOOR_BREACH", "ATTACK"]
-		ai_state_changed.emit(names[int(ai_state)], suspicion)
-
-
-func _pick_next_patrol_point() -> void:
+func pick_next_patrol_point() -> void:
 	if patrol_points.is_empty():
 		return
 	var now: float = Time.get_ticks_msec() * 0.001
@@ -456,50 +455,17 @@ func _pick_next_patrol_point() -> void:
 func hear_noise(noise_pos: Vector3, radius: float, priority: float = 1.0) -> void:
 	if not ai_ready or is_attacking:
 		return
-	var vertical_diff: float = absf(noise_pos.y - global_position.y)
-	var effective_radius: float = radius * (0.72 if vertical_diff > 3.0 else 1.0)
-	var dist: float = global_position.distance_to(noise_pos)
-	if dist > effective_radius:
-		return
-
-	_add_heat_near(noise_pos, 1.1 * priority)
-	var closeness: float = 1.0 - (dist / maxf(effective_radius, 0.1))
-	suspicion = clampf(suspicion + (24.0 + 38.0 * closeness) * priority, 0.0, 100.0)
-
-	var nav_target: Vector3 = _closest_nav_point(noise_pos)
-	if ai_state == AIState.CHASE:
-		if not _can_see_player_core():
-			last_known_player_pos = nav_target
-			nav_agent.set_target_position(last_known_player_pos)
-		return
-
-	if ai_state == AIState.INVESTIGATE and priority < last_noise_priority and dist > current_target_pos.distance_to(global_position):
-		return
-
-	last_noise_priority = priority
-	last_known_player_pos = nav_target
-	current_target_pos = nav_target
-	nav_agent.set_target_position(current_target_pos)
-	wait_timer = INVESTIGATE_WAIT_TIME
-	stuck_count = 0
-	_set_state(AIState.INVESTIGATE)
+	if ai_brain and ai_brain.has_method("on_hear_noise"):
+		ai_brain.on_hear_noise(noise_pos, radius, priority)
 
 
-func _get_player_eye_pos() -> Vector3:
-	if player == null:
-		return Vector3.ZERO
-	var is_crouched: bool = player.get("crouched") == true
-	var y_offset: float = 0.75 if is_crouched else 1.35
-	return player.global_position + Vector3(0.0, y_offset, 0.0)
-
-
-func _is_player_crouched() -> bool:
+func is_player_crouched() -> bool:
 	if player == null or not is_instance_valid(player):
 		return false
 	return player.get("crouched") == true
 
 
-func _is_player_facing_me() -> bool:
+func is_player_facing_me() -> bool:
 	if player == null or not is_instance_valid(player):
 		return false
 	var player_head: Node3D = player.get_node_or_null("head") as Node3D
@@ -512,7 +478,14 @@ func _is_player_facing_me() -> bool:
 	return player_fwd.normalized().dot(to_clown.normalized()) > 0.35
 
 
-func _has_line_of_sight_to_player() -> bool:
+func _get_player_eye_pos() -> Vector3:
+	if player == null:
+		return Vector3.ZERO
+	var y_offset: float = 0.75 if is_player_crouched() else 1.35
+	return player.global_position + Vector3(0.0, y_offset, 0.0)
+
+
+func has_line_of_sight_to_player() -> bool:
 	if player == null or not is_instance_valid(player):
 		return false
 	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
@@ -527,11 +500,22 @@ func _has_line_of_sight_to_player() -> bool:
 	return hit.get("collider") == player
 
 
-func _evaluate_vision() -> int:
+func evaluate_vision_params(
+	core_range_base: float,
+	core_half_deg: float,
+	periph_range_base: float,
+	periph_half_deg: float,
+	crouch_mult: float,
+	dark_mult: float,
+	prox_range_base: float,
+	crouch_prox_range: float,
+	time_since_seen: float,
+	wardrobe_memory_cutoff: float
+) -> int:
 	if player == null or not is_instance_valid(player):
 		return 0
 	var is_player_hidden: bool = player.get("is_hidden") == true
-	if is_player_hidden and time_since_last_seen > 3.0:
+	if is_player_hidden and time_since_seen > wardrobe_memory_cutoff:
 		return 0
 
 	var to_player: Vector3 = player.global_position - global_position
@@ -539,15 +523,17 @@ func _evaluate_vision() -> int:
 	if absf(to_player.y) > 6.0:
 		return 0
 
-	var crouched: bool = _is_player_crouched()
-	var light_on: bool = player.get("flashlight_on") != false
-	var light_mult: float = 1.0 if light_on else 0.72
-	var prox_range: float = CROUCH_PROXIMITY_RANGE if (crouched and smoothed_player_vel.length() < 0.4) else PROXIMITY_SENSE_RANGE
+	var crouched: bool = is_player_crouched()
+	var light_on: bool = true
+	if has_node("/root/GameSettings") and bool(get_node("/root/GameSettings").dark_mode):
+		light_on = player.get("flashlight_on") != false
+	var light_mult: float = 1.0 if light_on else dark_mult
+	var prox_range: float = crouch_prox_range if (crouched and smoothed_player_vel.length() < 0.4) else prox_range_base
 	if dist <= prox_range:
-		return 2 if _has_line_of_sight_to_player() else 0
+		return 2 if has_line_of_sight_to_player() else 0
 
-	var core_range: float = CORE_VISION_RANGE * (CROUCH_VISION_MULT if crouched else 1.0) * light_mult
-	var periph_range: float = PERIPHERAL_VISION_RANGE * (CROUCH_VISION_MULT if crouched else 1.0) * light_mult
+	var core_range: float = core_range_base * (crouch_mult if crouched else 1.0) * light_mult
+	var periph_range: float = periph_range_base * (crouch_mult if crouched else 1.0) * light_mult
 	if dist > core_range:
 		return 0
 
@@ -558,30 +544,38 @@ func _evaluate_vision() -> int:
 		return 0
 
 	var cos_angle: float = forward.normalized().dot(to_horiz.normalized())
-	if cos_angle >= cos(deg_to_rad(CORE_VISION_HALF_ANGLE_DEG)):
-		return 2 if _has_line_of_sight_to_player() else 0
-	if dist <= periph_range and cos_angle >= cos(deg_to_rad(PERIPHERAL_HALF_ANGLE_DEG)):
-		return 1 if _has_line_of_sight_to_player() else 0
+	if cos_angle >= cos(deg_to_rad(core_half_deg)):
+		return 2 if has_line_of_sight_to_player() else 0
+	if dist <= periph_range and cos_angle >= cos(deg_to_rad(periph_half_deg)):
+		return 1 if has_line_of_sight_to_player() else 0
 	return 0
 
 
-func _can_see_player_core() -> bool:
-	return _evaluate_vision() == 2
+func can_see_player_core_params(
+	core_range_base: float,
+	core_half_deg: float,
+	crouch_mult: float,
+	dark_mult: float,
+	prox_range_base: float,
+	crouch_prox_range: float,
+	time_since_seen: float,
+	wardrobe_memory_cutoff: float
+) -> bool:
+	return evaluate_vision_params(
+		core_range_base,
+		core_half_deg,
+		0.0,
+		0.0,
+		crouch_mult,
+		dark_mult,
+		prox_range_base,
+		crouch_prox_range,
+		time_since_seen,
+		wardrobe_memory_cutoff
+	) == 2
 
 
-func _target_in_attack_range() -> bool:
-	if player == null or not is_instance_valid(player):
-		return false
-	var diff: Vector3 = player.global_position - global_position
-	var horiz_dist: float = Vector2(diff.x, diff.z).length()
-	if horiz_dist > ATTACK_RANGE or absf(diff.y) > ATTACK_VERTICAL_RANGE:
-		return false
-	return _has_line_of_sight_to_player()
-
-
-func _scan_environmental_anomalies() -> void:
-	if ai_state == AIState.CHASE or ai_state == AIState.ATTACK or ai_state == AIState.DOOR_BREACH:
-		return
+func scan_door_anomaly(max_dist: float) -> Vector3:
 	var now: float = Time.get_ticks_msec() * 0.001
 	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
 	var eye_origin: Vector3 = global_position + Vector3(0.0, 1.5, 0.0)
@@ -594,7 +588,7 @@ func _scan_environmental_anomalies() -> void:
 		if now < float(info["ai_ignore_until"]):
 			continue
 		var door_pos: Vector3 = info["pos"]
-		if door_pos.distance_to(global_position) > 10.5 or absf(door_pos.y - global_position.y) > 2.8:
+		if door_pos.distance_to(global_position) > max_dist or absf(door_pos.y - global_position.y) > 2.8:
 			continue
 		var current_opened: bool = door_node.get("opened") == true
 		var remembered_opened: bool = bool(info["opened"])
@@ -609,14 +603,45 @@ func _scan_environmental_anomalies() -> void:
 			continue
 
 		info["opened"] = current_opened
-		suspicion = clampf(suspicion + 45.0, 0.0, 100.0)
-		_add_heat_near(door_pos, 2.2)
-		last_known_player_pos = _closest_nav_point(door_pos)
-		current_target_pos = last_known_player_pos
-		nav_agent.set_target_position(current_target_pos)
-		wait_timer = INVESTIGATE_WAIT_TIME
-		_set_state(AIState.INVESTIGATE)
-		return
+		add_heat_near(door_pos, 2.2)
+		return door_pos
+	return Vector3.INF
+
+
+func build_search_fan_points(center_pos: Vector3, count: int) -> Array[Vector3]:
+	var out: Array[Vector3] = []
+	var base: Vector3 = closest_nav_point(center_pos)
+	out.append(base)
+	var forward_dir: Vector3 = smoothed_player_vel
+	forward_dir.y = 0.0
+	if forward_dir.length_squared() < 0.04:
+		forward_dir = -global_transform.basis.z
+		forward_dir.y = 0.0
+	forward_dir = forward_dir.normalized()
+	var side_dir: Vector3 = Vector3(-forward_dir.z, 0.0, forward_dir.x)
+
+	var offsets: Array[Vector3] = [
+		forward_dir * 3.5 + side_dir * 2.2,
+		forward_dir * 3.5 - side_dir * 2.2,
+		forward_dir * 5.2,
+		-side_dir * 3.6,
+	]
+	for i in range(mini(count, offsets.size())):
+		var cand: Vector3 = closest_nav_point(base + offsets[i])
+		if cand.distance_to(base) > 1.2:
+			out.append(cand)
+	return out
+
+
+func compute_chase_intercept_target(fallback_pos: Vector3, factor: float, max_lookahead: float) -> Vector3:
+	if player == null or not is_instance_valid(player):
+		return fallback_pos
+	var dist: float = global_position.distance_to(player.global_position)
+	if dist <= 4.2 or smoothed_player_vel.length() < 1.2:
+		return closest_nav_point(player.global_position)
+	var lookahead: float = clampf(dist * factor, 0.25, max_lookahead)
+	var predicted: Vector3 = player.global_position + smoothed_player_vel * lookahead
+	return closest_nav_point(predicted)
 
 
 func _temp_ignore_door_body(body: PhysicsBody3D) -> void:
@@ -652,10 +677,7 @@ func _open_door_node(door_node: Node, door_body: PhysicsBody3D, fallback_pos: Ve
 	var door_pos: Vector3 = (door_node as Node3D).global_position if door_node is Node3D else fallback_pos
 	if locked:
 		if not _is_position_blocked(door_pos):
-			blocked_doors.append({
-				"pos": door_pos,
-				"until": Time.get_ticks_msec() * 0.001 + 22.0,
-			})
+			_mark_temp_blocked(door_pos, 22.0)
 		return 2
 
 	if door_node.get("opened") == false:
@@ -677,12 +699,10 @@ func _open_door_node(door_node: Node, door_body: PhysicsBody3D, fallback_pos: Ve
 
 
 func _check_door_ahead(move_dir: Vector3) -> int:
-	# Returns: 0 = clear, 1 = unlocked door being opened, 2 = locked door blocking path
 	if move_dir.length_squared() < 0.01:
 		return 0
 	var dir_horiz: Vector3 = Vector3(move_dir.x, 0.0, move_dir.z).normalized()
 
-	# 1) Proximity check against snapshotted doors in front of clown (catches doors even when ray misses tiny knob!)
 	for id in door_memory.keys():
 		var info: Dictionary = door_memory[id]
 		var dnode: Node = info["node"]
@@ -700,7 +720,6 @@ func _check_door_ahead(move_dir: Vector3) -> int:
 				if res != 0:
 					return res
 
-	# 2) Forward raycast on both layer 1 (door panel) and layer 4 (door lock/knob)
 	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
 	var origin: Vector3 = global_position + Vector3(0.0, 1.1, 0.0)
 	var target: Vector3 = origin + dir_horiz * 1.85
@@ -718,46 +737,61 @@ func _check_door_ahead(move_dir: Vector3) -> int:
 	return _open_door_node(door_node, hit_body, target)
 
 
-func _build_search_fan(center_pos: Vector3) -> void:
-	search_waypoints.clear()
-	search_step_idx = 0
-	var base: Vector3 = _closest_nav_point(center_pos)
-	search_waypoints.append(base)
-	var forward_dir: Vector3 = last_known_player_vel
-	forward_dir.y = 0.0
-	if forward_dir.length_squared() < 0.04:
-		forward_dir = -global_transform.basis.z
-		forward_dir.y = 0.0
-	forward_dir = forward_dir.normalized()
-	var side_dir: Vector3 = Vector3(-forward_dir.z, 0.0, forward_dir.x)
+func _steer_around_walls(desired_dir: Vector3) -> Vector3:
+	if desired_dir.length_squared() < 0.001:
+		return desired_dir
+	var dir: Vector3 = desired_dir.normalized()
+	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+	var origin: Vector3 = global_position + Vector3(0.0, 0.95, 0.0)
 
-	var offsets: Array[Vector3] = [
-		forward_dir * 3.5 + side_dir * 2.2,
-		forward_dir * 3.5 - side_dir * 2.2,
-		forward_dir * 5.2,
-	]
-	for off in offsets:
-		var cand: Vector3 = _closest_nav_point(base + off)
-		if cand.distance_to(base) > 1.2:
-			search_waypoints.append(cand)
+	var left_dir: Vector3 = dir.rotated(Vector3.UP, deg_to_rad(36.0))
+	var right_dir: Vector3 = dir.rotated(Vector3.UP, deg_to_rad(-36.0))
+
+	var hit_center: bool = _is_solid_wall_hit(space_state, origin, dir, 0.72)
+	var hit_left: bool = _is_solid_wall_hit(space_state, origin, left_dir, 0.85)
+	var hit_right: bool = _is_solid_wall_hit(space_state, origin, right_dir, 0.85)
+
+	if hit_left and not hit_right:
+		return (dir + right_dir * 0.85).normalized()
+	if hit_right and not hit_left:
+		return (dir + left_dir * 0.85).normalized()
+	if hit_center:
+		if not hit_left and not hit_right:
+			return left_dir
+	return dir
 
 
-func _compute_chase_intercept_target() -> Vector3:
+func _is_solid_wall_hit(space_state: PhysicsDirectSpaceState3D, origin: Vector3, dir: Vector3, length: float) -> bool:
+	var q: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, origin + dir * length)
+	q.exclude = [get_rid()]
+	q.collision_mask = 1
+	var hit: Dictionary = space_state.intersect_ray(q)
+	if hit.is_empty():
+		return false
+	var col = hit.get("collider")
+	if _resolve_door_interact_node(col) != null:
+		return false
+	# Ignore gentle stair steps/ramps (surface normal pointing mostly upward)
+	var normal_val = hit.get("normal")
+	if normal_val is Vector3 and (normal_val as Vector3).y > 0.45:
+		return false
+	return true
+
+
+func _target_in_attack_range() -> bool:
 	if player == null or not is_instance_valid(player):
-		return last_known_player_pos
-	var dist: float = global_position.distance_to(player.global_position)
-	if dist <= 4.2 or smoothed_player_vel.length() < 1.2:
-		return _closest_nav_point(player.global_position)
-	var lookahead: float = clampf(dist * 0.14, 0.25, 1.05)
-	var predicted: Vector3 = player.global_position + smoothed_player_vel * lookahead
-	return _closest_nav_point(predicted)
+		return false
+	var diff: Vector3 = player.global_position - global_position
+	var horiz_dist: float = Vector2(diff.x, diff.z).length()
+	if horiz_dist > ATTACK_RANGE or absf(diff.y) > ATTACK_VERTICAL_RANGE:
+		return false
+	return has_line_of_sight_to_player()
 
 
 func _trigger_attack() -> void:
 	if is_attacking or kill_emitted:
 		return
 	is_attacking = true
-	_set_state(AIState.ATTACK)
 	velocity = Vector3.ZERO
 	if has_node("/root/AudioManager"):
 		var am = get_node("/root/AudioManager")
@@ -804,7 +838,6 @@ func _physics_process(delta: float) -> void:
 	if not ai_ready:
 		return
 
-	aggression = clampf(aggression + delta * 0.0018, 0.0, 1.0)
 	for i in range(zone_heat.size()):
 		zone_heat[i] = maxf(zone_heat[i] - delta * 0.015, 0.0)
 
@@ -826,184 +859,43 @@ func _physics_process(delta: float) -> void:
 		return
 
 	_update_player_velocity(delta)
-	state_timer += delta
-	time_since_last_seen += delta
 	if alert_sfx_cooldown > 0.0:
 		alert_sfx_cooldown -= delta
-
-	# Creepy 3D patrol hum so player hears the clown roaming nearby floors
-	hum_timer -= delta
-	if hum_timer <= 0.0:
-		hum_timer = randf_range(7.0, 12.5)
-		if ai_state == AIState.PATROL or ai_state == AIState.STALK or ai_state == AIState.SEARCH:
-			if has_node("/root/AudioManager"):
-				get_node("/root/AudioManager").play_sfx_3d("clown_hum", global_position, -7.5, randf_range(0.92, 1.06), 19.0)
-
-	_update_trap_placement(delta)
-
-	# Dynamic tension / heartbeat feedback for AudioManager
-	if has_node("/root/AudioManager"):
-		var dist_p: float = global_position.distance_to(player.global_position)
-		var proximity_tension: float = clampf(1.0 - (dist_p / 16.0), 0.0, 1.0)
-		var state_bonus: float = 0.0
-		if ai_state == AIState.CHASE:
-			state_bonus = 0.55
-		elif ai_state == AIState.AMBUSH or ai_state == AIState.STALK:
-			state_bonus = 0.30
-		elif ai_state == AIState.SEARCH or ai_state == AIState.INVESTIGATE:
-			state_bonus = 0.18
-		get_node("/root/AudioManager").set_chase_intensity(clampf(proximity_tension * 0.75 + state_bonus, 0.0, 1.0))
 
 	if _target_in_attack_range():
 		_trigger_attack()
 		return
 
-	anomaly_scan_timer += delta
-	if anomaly_scan_timer >= ANOMALY_SCAN_INTERVAL:
-		anomaly_scan_timer = 0.0
-		_scan_environmental_anomalies()
+	var intent: Dictionary = {"should_move": false, "move_speed": 2.0, "vision": 0}
+	if ai_brain and ai_brain.has_method("tick_ai"):
+		intent = ai_brain.tick_ai(delta)
 
-	var vision: int = _evaluate_vision()
-	var dist_to_player: float = global_position.distance_to(player.global_position)
+	var should_move: bool = bool(intent.get("should_move", false))
+	var move_speed: float = float(intent.get("move_speed", 2.0))
+	var vision: int = int(intent.get("vision", 0))
 
-	if vision == 2:
-		time_since_last_seen = 0.0
-		last_known_player_pos = _closest_nav_point(player.global_position)
-		last_known_player_vel = smoothed_player_vel
-		_add_heat_near(player.global_position, delta * 2.5)
-		suspicion = clampf(suspicion + delta * (120.0 if dist_to_player < 9.0 else 75.0), 0.0, 100.0)
-		lose_sight_timer = BASE_CHASE_MEMORY_TIME + aggression * 2.5
+	# Creepy 3D patrol hum
+	hum_timer -= delta
+	if hum_timer <= 0.0:
+		hum_timer = randf_range(7.0, 12.5)
+		if ai_brain and ai_brain.has_method("can_hum_now") and ai_brain.can_hum_now():
+			if has_node("/root/AudioManager"):
+				get_node("/root/AudioManager").play_sfx_3d("clown_hum", global_position, -7.5, randf_range(0.92, 1.06), 19.0)
 
-		if ai_state != AIState.CHASE and dist_to_player > 9.5 and not _is_player_facing_me():
-			_set_state(AIState.STALK)
-			nav_agent.set_target_position(last_known_player_pos)
-		elif suspicion >= 65.0 or dist_to_player <= 9.5 or _is_player_facing_me():
-			_set_state(AIState.CHASE)
-	elif vision == 1:
-		var gain_rate: float = (68.0 if not _is_player_crouched() else 38.0) * (1.0 + aggression * 0.4)
-		suspicion = clampf(suspicion + delta * gain_rate, 0.0, 100.0)
-		last_known_player_pos = _closest_nav_point(player.global_position)
-		last_known_player_vel = smoothed_player_vel
-		if suspicion >= 82.0:
-			lose_sight_timer = BASE_CHASE_MEMORY_TIME + aggression * 2.0
-			_set_state(AIState.CHASE)
-		elif suspicion >= 38.0 and ai_state == AIState.PATROL:
-			current_target_pos = last_known_player_pos
-			nav_agent.set_target_position(current_target_pos)
-			wait_timer = INVESTIGATE_WAIT_TIME
-			_set_state(AIState.INVESTIGATE)
-	else:
-		suspicion = maxf(suspicion - delta * 9.0, 0.0)
-		if ai_state == AIState.CHASE:
-			lose_sight_timer -= delta
-			if lose_sight_timer <= 0.0:
-				if last_known_player_vel.length() > 2.0 and aggression >= 0.30:
-					var cutoff: Vector3 = _closest_nav_point(
-						last_known_player_pos + last_known_player_vel.normalized() * 5.5
-					)
-					current_target_pos = cutoff
-					nav_agent.set_target_position(cutoff)
-					wait_timer = AMBUSH_WAIT_TIME
-					_set_state(AIState.AMBUSH)
-				else:
-					_build_search_fan(last_known_player_pos)
-					nav_agent.set_target_position(search_waypoints[0])
-					wait_timer = 1.1
-					_set_state(AIState.SEARCH)
-		elif ai_state == AIState.STALK:
-			current_target_pos = last_known_player_pos
-			nav_agent.set_target_position(current_target_pos)
-			wait_timer = INVESTIGATE_WAIT_TIME
-			_set_state(AIState.INVESTIGATE)
+	_update_trap_placement(delta)
 
-	if anim_tree:
-		anim_tree.set("parameters/conditions/attack", false)
-		anim_tree.set("parameters/conditions/run", true)
-
-	var move_speed: float = BASE_PATROL_SPEED + aggression * 0.35
-	var should_move: bool = true
-
-	match ai_state:
-		AIState.CHASE:
-			move_speed = BASE_CHASE_SPEED + aggression * MAX_CHASE_BONUS
-			if vision == 2:
-				nav_agent.set_target_position(_compute_chase_intercept_target())
-			elif nav_agent.is_navigation_finished():
-				_build_search_fan(last_known_player_pos)
-				nav_agent.set_target_position(search_waypoints[0])
-				wait_timer = 1.0
-				_set_state(AIState.SEARCH)
-		AIState.STALK:
-			if _is_player_facing_me() and dist_to_player > 10.5 and stalk_freeze_timer <= 0.0:
-				stalk_freeze_timer = 0.55
-			if stalk_freeze_timer > 0.0:
-				stalk_freeze_timer -= delta
-				should_move = false
-			else:
-				move_speed = STALK_SPEED
-				nav_agent.set_target_position(last_known_player_pos)
-				if dist_to_player <= 7.8 or _is_player_facing_me():
-					lose_sight_timer = BASE_CHASE_MEMORY_TIME + aggression * 2.0
-					_set_state(AIState.CHASE)
-		AIState.INVESTIGATE:
-			move_speed = INVESTIGATE_SPEED + aggression * 0.25
-			if nav_agent.is_navigation_finished():
-				should_move = false
-				wait_timer -= delta
-				rotation.y += sin(Time.get_ticks_msec() * 0.0045) * delta * 1.9
-				if wait_timer <= 0.0:
-					_build_search_fan(current_target_pos)
-					if search_waypoints.size() > 1:
-						search_step_idx = 1
-						nav_agent.set_target_position(search_waypoints[1])
-						wait_timer = 0.9
-						_set_state(AIState.SEARCH)
-					else:
-						_set_state(AIState.PATROL)
-						_pick_next_patrol_point()
-		AIState.SEARCH:
-			move_speed = SEARCH_SPEED
-			if nav_agent.is_navigation_finished():
-				should_move = false
-				wait_timer -= delta
-				rotation.y += sin(Time.get_ticks_msec() * 0.0055) * delta * 2.2
-				if wait_timer <= 0.0:
-					search_step_idx += 1
-					if search_step_idx < search_waypoints.size():
-						nav_agent.set_target_position(search_waypoints[search_step_idx])
-						wait_timer = 0.95
-					else:
-						_set_state(AIState.PATROL)
-						_pick_next_patrol_point()
-		AIState.AMBUSH:
-			move_speed = AMBUSH_SPEED
-			if nav_agent.is_navigation_finished():
-				should_move = false
-				wait_timer -= delta
-				if last_known_player_vel.length() > 0.2:
-					var watch_yaw: float = atan2(last_known_player_vel.x, last_known_player_vel.z)
-					rotation.y = lerp_angle(rotation.y, watch_yaw, delta * 3.0)
-				if wait_timer <= 0.0:
-					_build_search_fan(current_target_pos)
-					nav_agent.set_target_position(search_waypoints[0])
-					wait_timer = 0.85
-					_set_state(AIState.SEARCH)
-		AIState.DOOR_BREACH:
-			should_move = false
-			door_breach_timer -= delta
-			if door_breach_timer <= 0.0:
-				_set_state(post_breach_state)
-		AIState.PATROL:
-			move_speed = BASE_PATROL_SPEED + aggression * 0.35
-			if nav_agent.is_navigation_finished() or state_timer > 22.0:
-				should_move = false
-				if wait_timer <= 0.0:
-					wait_timer = PATROL_WAIT_TIME
-				else:
-					wait_timer -= delta
-					if wait_timer <= 0.0:
-						_pick_next_patrol_point()
-						state_timer = 0.0
+	# Dynamic tension / heartbeat feedback
+	if has_node("/root/AudioManager"):
+		var dist_p: float = global_position.distance_to(player.global_position)
+		var proximity_tension: float = clampf(1.0 - (dist_p / 16.0), 0.0, 1.0)
+		var state_bonus: float = 0.0
+		if ai_brain and ai_brain.has_method("is_chasing") and ai_brain.is_chasing():
+			state_bonus = 0.55
+		elif ai_brain and ai_brain.has_method("is_stalk_or_ambush") and ai_brain.is_stalk_or_ambush():
+			state_bonus = 0.30
+		elif ai_brain and ai_brain.has_method("is_alert_state") and ai_brain.is_alert_state():
+			state_bonus = 0.18
+		get_node("/root/AudioManager").set_chase_intensity(clampf(proximity_tension * 0.75 + state_bonus, 0.0, 1.0))
 
 	if not is_on_floor():
 		velocity.y -= GRAVITY * delta
@@ -1020,7 +912,7 @@ func _physics_process(delta: float) -> void:
 			horiz_dir = sidestep_dir
 
 		if horiz_dir.length_squared() > 0.001:
-			horiz_dir = horiz_dir.normalized()
+			horiz_dir = _steer_around_walls(horiz_dir)
 			velocity.x = horiz_dir.x * move_speed
 			velocity.z = horiz_dir.z * move_speed
 			rotation.y = lerp_angle(rotation.y, atan2(-horiz_dir.x, -horiz_dir.z), delta * 11.0)
@@ -1030,15 +922,13 @@ func _physics_process(delta: float) -> void:
 				door_check_timer = DOOR_CHECK_INTERVAL
 				var door_res: int = _check_door_ahead(horiz_dir)
 				if door_res == 1:
-					post_breach_state = ai_state
-					door_breach_timer = DOOR_BREACH_PAUSE
-					_set_state(AIState.DOOR_BREACH)
+					if ai_brain and ai_brain.has_method("on_door_breached"):
+						ai_brain.on_door_breached()
 					velocity.x = 0.0
 					velocity.z = 0.0
 				elif door_res == 2:
-					if ai_state != AIState.CHASE:
-						_set_state(AIState.PATROL)
-						_pick_next_patrol_point()
+					if ai_brain and ai_brain.has_method("on_locked_door_blocked"):
+						ai_brain.on_locked_door_blocked()
 		else:
 			velocity.x = 0.0
 			velocity.z = 0.0
@@ -1054,7 +944,6 @@ func _physics_process(delta: float) -> void:
 			if moved < STUCK_MIN_DISTANCE:
 				stuck_count += 1
 				if stuck_count == 1:
-					# Try opening any nearby door before sidestepping
 					if _check_door_ahead(-global_transform.basis.z) == 1:
 						stuck_count = 0
 					else:
@@ -1062,13 +951,15 @@ func _physics_process(delta: float) -> void:
 						if randf() < 0.5:
 							side = -side
 						sidestep_dir = side.normalized()
-						sidestep_timer = 0.45
+						sidestep_timer = 0.5
 						nav_agent.set_target_position(nav_agent.target_position)
 				else:
 					stuck_count = 0
-					if ai_state != AIState.CHASE or vision != 2:
-						_set_state(AIState.PATROL)
-						_pick_next_patrol_point()
+					_mark_temp_blocked(current_target_pos, 14.0)
+					var is_chasing_now: bool = ai_brain != null and ai_brain.has_method("is_chasing") and ai_brain.is_chasing()
+					if not is_chasing_now or vision != 2:
+						if ai_brain and ai_brain.has_method("on_stuck_abort"):
+							ai_brain.on_stuck_abort()
 					else:
 						var side2: Vector3 = Vector3(-horiz_dir.z, 0.0, horiz_dir.x)
 						sidestep_dir = (side2 if randf() < 0.5 else -side2).normalized()
@@ -1079,14 +970,18 @@ func _physics_process(delta: float) -> void:
 		velocity.x = lerp(velocity.x, 0.0, delta * 9.0)
 		velocity.z = lerp(velocity.z, 0.0, delta * 9.0)
 
-	# 3D Spatial Clown Footsteps
 	var clown_horiz_speed: float = Vector2(velocity.x, velocity.z).length()
+	if anim_tree:
+		anim_tree.set("parameters/conditions/attack", false)
+		anim_tree.set("parameters/conditions/run", clown_horiz_speed > 0.35)
+
 	if is_on_floor() and clown_horiz_speed > 0.8 and not is_attacking:
 		clown_step_timer -= delta
 		if clown_step_timer <= 0.0:
 			clown_step_timer = clampf(1.22 / maxf(clown_horiz_speed, 1.0), 0.24, 0.58)
 			if has_node("/root/AudioManager"):
-				var vol: float = -3.0 if ai_state == AIState.CHASE else -7.5
+				var is_chasing_sfx: bool = ai_brain != null and ai_brain.has_method("is_chasing") and ai_brain.is_chasing()
+				var vol: float = -3.0 if is_chasing_sfx else -7.5
 				get_node("/root/AudioManager").play_sfx_3d("footstep_clown", global_position, vol, randf_range(0.86, 1.08), 22.0)
 	else:
 		clown_step_timer = 0.05
@@ -1105,16 +1000,16 @@ func _update_trap_placement(delta: float) -> void:
 	for i in range(active_traps.size() - 1, -1, -1):
 		if not is_instance_valid(active_traps[i]):
 			active_traps.remove_at(i)
-	if not is_on_floor() or active_traps.size() >= MAX_ACTIVE_TRAPS:
+	if max_active_traps <= 0 or not is_on_floor() or active_traps.size() >= max_active_traps:
 		return
-	if ai_state != AIState.PATROL and ai_state != AIState.INVESTIGATE and ai_state != AIState.SEARCH:
+	if ai_brain and ai_brain.has_method("is_chasing") and ai_brain.is_chasing():
 		return
 	trap_cooldown_timer -= delta
 	if trap_cooldown_timer <= 0.0:
-		trap_cooldown_timer = TRAP_DROP_INTERVAL
+		trap_cooldown_timer = trap_drop_interval
 		if is_instance_valid(player) and global_position.distance_to(player.global_position) < 3.5:
 			return
-		var trap_pos: Vector3 = _closest_nav_point(global_position)
+		var trap_pos: Vector3 = closest_nav_point(global_position)
 		for t in active_traps:
 			if t.global_position.distance_to(trap_pos) < 4.0:
 				return
@@ -1132,17 +1027,13 @@ func _update_trap_placement(delta: float) -> void:
 func reset_for_new_day(day: int) -> void:
 	is_attacking = false
 	kill_emitted = false
-	suspicion = 0.0
-	time_since_last_seen = 999.0
-	aggression = clampf(0.15 + float(day - 1) * 0.14, 0.15, 0.9)
 	velocity = Vector3.ZERO
 	stuck_count = 0
 	sidestep_timer = 0.0
-	wait_timer = 0.5
 	if anim_tree:
 		anim_tree.set("parameters/conditions/attack", false)
 		anim_tree.set("parameters/conditions/run", true)
 	if state_machine and state_machine.has_method("travel"):
 		state_machine.travel("Run")
-	_set_state(AIState.PATROL)
-	_pick_next_patrol_point()
+	if ai_brain and ai_brain.has_method("on_day_reset"):
+		ai_brain.on_day_reset(day)

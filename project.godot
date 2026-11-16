@@ -22,6 +22,7 @@ config/icon="res://assets/stare_logo.png"
 [autoload]
 
 AudioManager="*res://scripts/audio_manager.gd"
+GameSettings="*res://scripts/game_settings.gd"
 
 [display]
 

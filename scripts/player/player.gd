@@ -57,7 +57,8 @@ var gravity = 9.8
 @onready var camera: Camera3D = $head/Camera3D
 @onready var flashlight: SpotLight3D = $head/Camera3D/SpotLight3D
 var camera_base_pos: Vector3 = Vector3.ZERO
-var flashlight_on: bool = true
+var dark_mode_enabled: bool = false
+var flashlight_on: bool = false
 
 # pickme
 @onready var hand: Node3D = $head/hand
@@ -97,8 +98,15 @@ func _ready():
 	camera_base_pos = camera.transform.origin
 	standing_colide_shape.disabled = false
 	crouch_colide_shape.disabled = true
+	if has_node("/root/GameSettings"):
+		dark_mode_enabled = bool(get_node("/root/GameSettings").dark_mode)
+	flashlight_on = dark_mode_enabled
 	if flashlight:
 		flashlight.visible = flashlight_on
+		if dark_mode_enabled:
+			flashlight.light_energy = 3.2
+			flashlight.spot_range = 19.0
+			flashlight.spot_angle = 44.0
 
 	is_touch_device = DisplayServer.is_touchscreen_available()
 	if is_touch_device:
@@ -158,6 +166,11 @@ func _unhandled_input(event):
 
 
 func _toggle_flashlight() -> void:
+	if not dark_mode_enabled:
+		if flashlight:
+			flashlight.visible = false
+		flashlight_on = false
+		return
 	flashlight_on = !flashlight_on
 	if flashlight:
 		flashlight.visible = flashlight_on
@@ -264,7 +277,7 @@ func get_stealth_status() -> String:
 		return "HIDDEN (Wardrobe)"
 	if crouched:
 		return "CROUCHED (Silent)"
-	if not flashlight_on:
+	if dark_mode_enabled and not flashlight_on:
 		return "DARK STEALTH (Light Off)"
 	return ""
 
