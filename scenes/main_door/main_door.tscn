@@ -52,10 +52,10 @@ shadow_mesh = SubResource("ArrayMesh_cg8hj")
 size = Vector3(0.07, 3.12, 1.67)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_vpjvm"]
-size = Vector3(0.175, 0.1, 0.095)
+size = Vector3(0.26, 0.34, 0.24)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_sc61n"]
-size = Vector3(0.2, 0.35, 0.155)
+size = Vector3(0.26, 0.55, 0.45)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_hf8oo"]
 albedo_texture = ExtResource("2_m255v")

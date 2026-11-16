@@ -313,6 +313,11 @@ func _get_interact_prompt(col: Object) -> String:
 		if md:
 			var has_mkey: bool = md.get("monster_key") == true
 			var has_plank: bool = md.get("wooden_hammer") == true
+			if picked and is_instance_valid(detected):
+				if detected.name == "monster_key" and not has_mkey:
+					return "[E] Unlock Padlock (Master Key)"
+				if detected.name == "hammer" and not has_plank:
+					return "[E] Break Plank (Hammer)"
 			if has_mkey and has_plank:
 				return "[E] Open Main Door & Escape!"
 			var missing: PackedStringArray = PackedStringArray()
@@ -490,6 +495,31 @@ func _process(delta):
 				else:
 					_play_sfx("door_locked", -2.0, randf_range(0.95, 1.05))
 					_show_hint("LOCKED! Needs Lockpin")
+			elif interact_col.name == "openz_all_locks":
+				var md: Node = interact_col.get_parent()
+				var handled_shortcut: bool = false
+				if md and picked and is_instance_valid(detected):
+					if detected.name == "monster_key" and md.get("monster_key") != true:
+						var lock_node := md.get_node_or_null("need_monster_key")
+						if lock_node:
+							pending_unlock_target = lock_node
+							hold_player_circle_loading()
+							timer.start()
+							handled_shortcut = true
+					elif detected.name == "hammer" and md.get("wooden_hammer") != true:
+						var plank_node := md.get_node_or_null("wood_hammer")
+						if plank_node and plank_node.has_method("interact"):
+							plank_node.interact()
+							if plank_node is CollisionObject3D:
+								plank_node.collision_layer = 1
+							_play_sfx("plank_break", 0.0, randf_range(0.95, 1.05))
+							_emit_noise(UNLOCK_NOISE_RADIUS, 1.5)
+							_notify_enemy_progress(0.18)
+							handled_shortcut = true
+				if not handled_shortcut:
+					interact_col.interact()
+					_play_sfx("door_open", -3.5, randf_range(0.90, 1.10))
+					_emit_noise(INTERACT_NOISE_RADIUS * 0.6)
 			else:
 				interact_col.interact()
 				_play_sfx("door_open", -3.5, randf_range(0.90, 1.10))
