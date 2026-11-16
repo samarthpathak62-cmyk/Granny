@@ -30,3 +30,4 @@ animation/remove_immutable_tracks=true
 import_script/path=""
 _subresources={}
 gltf/embedded_image_handling=1
+fbx/importer=0
