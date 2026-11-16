@@ -61,7 +61,7 @@ collision_mask = 5
 debug_shape_thickness = 1
 
 [node name="for_ship" type="RayCast3D" parent="head/Camera3D"]
-target_position = Vector3(0, 0, -2.055)
+target_position = Vector3(0, 0, -4.5)
 collision_mask = 32
 
 [node name="TextureRect" type="TextureRect" parent="head/Camera3D"]

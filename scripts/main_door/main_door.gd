@@ -29,4 +29,9 @@ func _on_openz_all_locks_all_done(_is_done):
 	else:
 		var player = get_tree().get_first_node_in_group("player")
 		if player and player.has_method("_show_hint"):
-			player._show_hint("REMOVE ALL LOCKS FIRST")
+			var missing: PackedStringArray = PackedStringArray()
+			if not wooden_hammer:
+				missing.append("Hammer (Plank)")
+			if not monster_key:
+				missing.append("Master Key")
+			player._show_hint("MAIN DOOR LOCKED! Needs: %s" % " + ".join(missing), 2.8)

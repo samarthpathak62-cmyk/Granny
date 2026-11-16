@@ -40,7 +40,7 @@ layout_mode = 2
 size_flags_horizontal = 4
 theme_override_fonts/font = ExtResource("1_hvget")
 theme_override_font_sizes/font_size = 120
-text = "You Died"
+text = "ROBERT CAUGHT YOU"
 
 [node name="mainMenu" type="Button" parent="VBoxContainer"]
 layout_mode = 2

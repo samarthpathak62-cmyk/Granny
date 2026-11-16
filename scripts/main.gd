@@ -35,6 +35,13 @@ var stealth_hud_label: Label = null
 var stamina_bar: ProgressBar = null
 var blood_flash_alpha: float = 0.0
 
+# Escape Note UI & physical table placement
+const EscapeNoteScript = preload("res://scripts/escape_note.gd")
+const EscapeNoteUIScript = preload("res://scripts/escape_note_ui.gd")
+var note_layer: CanvasLayer = null
+var note_open: bool = false
+var note_cooldown: float = 0.0
+
 
 func _ready() -> void:
 	get_tree().paused = false
@@ -64,7 +71,9 @@ func _ready() -> void:
 	_apply_lighting_mode()
 	_build_psx_postprocess()
 	_build_granny_hud()
-	_show_day_intro(current_day, "%s MODE%s — Escape via Main Door or Boat!" % [
+	_build_escape_note_ui()
+	call_deferred("_spawn_escape_notes_on_tables")
+	_show_day_intro(current_day, "%s MODE%s — Check tables for the Escape Note!" % [
 		diff_name,
 		" (DARK)" if dark_mode_enabled else ""
 	])
@@ -268,9 +277,9 @@ void fragment() {
 
 	var controls_hint := Label.new()
 	if dark_mode_enabled:
-		controls_hint.text = "[WASD] Move  [Shift] Sprint  [C] Crouch/Hide  [F/G] Pick/Drop  [E] Interact  [T/RMB] Torch  [F3] PSX"
+		controls_hint.text = "[WASD] Move  [Shift] Sprint  [C] Crouch/Hide  [F/G] Pick/Drop  [E] Interact  [Tab] Note  [T/RMB] Torch  [F3] PSX"
 	else:
-		controls_hint.text = "[WASD] Move  [Shift] Sprint  [C] Crouch/Hide  [F/G] Pick/Drop  [E] Interact  [F3] PSX"
+		controls_hint.text = "[WASD] Move  [Shift] Sprint  [C] Crouch/Hide  [F/G] Pick/Drop  [E] Interact  [Tab] Note  [F3] PSX"
 	controls_hint.add_theme_font_size_override("font_size", 14)
 	controls_hint.add_theme_color_override("font_color", Color(0.82, 0.82, 0.82, 0.78))
 	controls_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -332,12 +341,160 @@ void fragment() {
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F3:
-		psx_enabled = !psx_enabled
-		if psx_rect:
-			psx_rect.visible = psx_enabled
-		if player_node and player_node.has_method("_show_hint"):
-			player_node._show_hint("PSX Shader: " + ("ON" if psx_enabled else "OFF"), 1.5)
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_F3:
+			psx_enabled = !psx_enabled
+			if psx_rect:
+				psx_rect.visible = psx_enabled
+			if player_node and player_node.has_method("_show_hint"):
+				player_node._show_hint("PSX Shader: " + ("ON" if psx_enabled else "OFF"), 1.5)
+		elif event.keycode == KEY_TAB and not pause and not transitioning_day and note_cooldown <= 0.0:
+			get_viewport().set_input_as_handled()
+			if note_open:
+				close_escape_note()
+			else:
+				open_escape_note()
+
+
+func _spawn_escape_notes_on_tables() -> void:
+	await get_tree().physics_frame
+	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+	if space_state == null:
+		return
+
+	# Place the physical Escape Note on both the Basement Table (near starting area)
+	# and the Ground Floor Dining Table (near Boat Gear) using exact downward raycasts.
+	var candidates: Array = [
+		{"from": Vector3(-18.04, 5.7, -19.52), "to": Vector3(-18.04, 4.1, -19.52), "yaw": 14.0},
+		{"from": Vector3(-18.65, 9.0, -5.00), "to": Vector3(-18.65, 7.2, -5.00), "yaw": -18.0},
+	]
+	for cfg in candidates:
+		var query := PhysicsRayQueryParameters3D.create(cfg["from"], cfg["to"], 1)
+		query.collide_with_bodies = true
+		var hit: Dictionary = space_state.intersect_ray(query)
+		if not hit.is_empty():
+			var note := StaticBody3D.new()
+			note.name = "EscapeNote"
+			note.set_script(EscapeNoteScript)
+			add_child(note)
+			note.global_position = hit["position"] + Vector3(0.0, 0.004, 0.0)
+			note.rotation_degrees.y = float(cfg["yaw"])
+
+
+func _build_escape_note_ui() -> void:
+	note_layer = CanvasLayer.new()
+	note_layer.name = "EscapeNoteLayer"
+	note_layer.layer = 12
+	note_layer.visible = false
+	note_layer.set_script(EscapeNoteUIScript)
+	note_layer.set("main_node", self)
+	add_child(note_layer)
+
+	var backdrop := ColorRect.new()
+	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	backdrop.color = Color(0.03, 0.02, 0.02, 0.72)
+	note_layer.add_child(backdrop)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	note_layer.add_child(center)
+
+	var paper := PanelContainer.new()
+	paper.custom_minimum_size = Vector2(740, 0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.90, 0.84, 0.69, 0.98)
+	style.border_color = Color(0.32, 0.21, 0.12, 1.0)
+	style.set_border_width_all(4)
+	style.set_corner_radius_all(8)
+	style.set_content_margin_all(28)
+	paper.add_theme_stylebox_override("panel", style)
+	center.add_child(paper)
+
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 12)
+	paper.add_child(vb)
+
+	var horror_font: Font = load("res://assets/FONTS/HelpMe.ttf") as Font
+	var ui_font: Font = load("res://assets/FONTS/GrimoireOfDeath-Regular.ttf") as Font
+
+	var title := Label.new()
+	title.text = "SURVIVOR'S ESCAPE NOTE"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if horror_font:
+		title.add_theme_font_override("font", horror_font)
+	title.add_theme_font_size_override("font_size", 42)
+	title.add_theme_color_override("font_color", Color(0.42, 0.07, 0.06))
+	vb.add_child(title)
+
+	var body := RichTextLabel.new()
+	body.bbcode_enabled = true
+	body.fit_content = true
+	body.scroll_active = false
+	body.custom_minimum_size = Vector2(680, 0)
+	if ui_font:
+		body.add_theme_font_override("normal_font", ui_font)
+		body.add_theme_font_override("bold_font", ui_font)
+	body.add_theme_font_size_override("normal_font_size", 21)
+	body.add_theme_font_size_override("bold_font_size", 22)
+	body.add_theme_color_override("default_color", Color(0.14, 0.09, 0.06))
+	body.text = (
+		"Robert The Clown locked you inside his house. You have [b]5 DAYS[/b] to escape.\n\n"
+		+ "[color=#6b1210][b]ROUTE 1 — MAIN FRONT DOOR (Ground Floor)[/b][/color]\n"
+		+ "  1. Pick up the [b]Lockpin[/b] in your starting cell to unlock the cell door.\n"
+		+ "  2. Smash the wooden plank on the Main Door with the [b]Hammer[/b].\n"
+		+ "  3. Find the [b]Master Key[/b] upstairs to unlock the Main Door padlock.\n"
+		+ "  4. Open the Main Door to escape! (Use [b]Basement Key[/b] for locked basement doors.)\n\n"
+		+ "[color=#12425c][b]ROUTE 2 — SWAMP BOAT (Sewer Dock)[/b][/color]\n"
+		+ "  1. Unlock the sewer iron gate using the [b]Grid Gate Key[/b].\n"
+		+ "  2. Find the [b]Boat Gear[/b] on the Ground Floor dining table.\n"
+		+ "  3. Aim at the Boat at the sewer dock and press [b][E][/b] to install the Boat Gear.\n"
+		+ "  4. Press [b][E][/b] again on the Boat to pull the [b]Boat Lever[/b] and escape!\n\n"
+		+ "[color=#3a2614][b]SURVIVAL TIPS[/b][/color]\n"
+		+ "  • Hold [b][C][/b] to crouch quietly, or hide inside [b]Wardrobes[/b].\n"
+		+ "  • Avoid [b]Bear Traps[/b] on the floor (mash [b][E][/b] if caught)."
+	)
+	vb.add_child(body)
+
+	var btn_row := HBoxContainer.new()
+	btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_child(btn_row)
+
+	var close_btn := Button.new()
+	close_btn.text = "  [E / TAB / ESC]  CLOSE NOTE  "
+	close_btn.custom_minimum_size = Vector2(280, 44)
+	if ui_font:
+		close_btn.add_theme_font_override("font", ui_font)
+	close_btn.add_theme_font_size_override("font_size", 22)
+	close_btn.pressed.connect(close_escape_note)
+	btn_row.add_child(close_btn)
+
+
+func open_escape_note() -> void:
+	if note_layer == null or note_open or pause or transitioning_day or note_cooldown > 0.0:
+		return
+	note_open = true
+	note_layer.visible = true
+	if note_layer.has_method("mark_opened"):
+		note_layer.mark_opened()
+	get_tree().paused = true
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	if has_node("/root/AudioManager"):
+		get_node("/root/AudioManager").play_sfx("ui_click", -3.0, 0.95)
+
+
+func close_escape_note() -> void:
+	if note_layer == null or not note_open:
+		return
+	note_open = false
+	note_cooldown = 0.20
+	note_layer.visible = false
+	get_tree().paused = false
+	if DisplayServer.is_touchscreen_available():
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	else:
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	if has_node("/root/AudioManager"):
+		get_node("/root/AudioManager").play_sfx("ui_click", -4.0, 1.05)
 
 
 func trigger_blood_flash(strength: float = 0.8) -> void:
@@ -364,6 +521,8 @@ func _show_day_intro(day_num: int, subtitle: String) -> void:
 
 
 func _process(delta: float) -> void:
+	if note_cooldown > 0.0:
+		note_cooldown = maxf(note_cooldown - delta, 0.0)
 	var chase_val: float = 0.0
 	if has_node("/root/AudioManager"):
 		chase_val = float(get_node("/root/AudioManager").chase_intensity)
@@ -389,6 +548,9 @@ func _process(delta: float) -> void:
 
 
 func pmenu() -> void:
+	if note_open:
+		close_escape_note()
+		return
 	pause = !pause
 	if pause:
 		pausemenu.show()

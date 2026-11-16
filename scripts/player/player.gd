@@ -255,9 +255,7 @@ func reset_for_new_day() -> void:
 	play_wakeup_animation()
 
 
-func get_held_item_label() -> String:
-	if not picked or not is_instance_valid(detected):
-		return "Hands: Empty"
+func _pretty_item_name(raw_name: String) -> String:
 	var pretty: Dictionary = {
 		"hammer": "Hammer",
 		"old_key": "Wardrobe Key",
@@ -267,7 +265,63 @@ func get_held_item_label() -> String:
 		"monster_key": "Master Key",
 		"need_gear": "Boat Gear",
 	}
-	return "Holding: %s" % str(pretty.get(detected.name, detected.name))
+	return str(pretty.get(raw_name, raw_name))
+
+
+func get_held_item_label() -> String:
+	if not picked or not is_instance_valid(detected):
+		return "Hands: Empty"
+	return "Holding: %s" % _pretty_item_name(detected.name)
+
+
+func consume_held_item() -> void:
+	if picked and is_instance_valid(detected):
+		var item: Node = detected
+		if item is pickable:
+			item.picked = false
+			item.dropped = false
+		if item is CollisionObject3D:
+			item.collision_layer = 0
+			item.collision_mask = 0
+		item.visible = false
+		item.queue_free()
+	picked = false
+	detected = null
+
+
+func _get_interact_prompt(col: Object) -> String:
+	if col.has_method("get_interact_prompt"):
+		return str(col.get_interact_prompt())
+	if col.get("keyreq") == true:
+		var req_key: String = str(col.get("keyname"))
+		var key_label: String = _pretty_item_name(req_key)
+		if picked and is_instance_valid(detected) and detected.name == req_key:
+			return "[E] Unlock (%s)" % key_label
+		return "[E] Locked — Needs %s" % key_label
+	if col.get("beatreq") == true:
+		var req_beat: String = str(col.get("beatname"))
+		var beat_label: String = _pretty_item_name(req_beat)
+		if picked and is_instance_valid(detected) and detected.name == req_beat:
+			return "[E] Break Plank (%s)" % beat_label
+		return "[E] Barricaded — Needs %s" % beat_label
+	if col.get("pinreq") == true:
+		if picked and is_instance_valid(detected) and detected.name == "lockpin":
+			return "[E] Pick Lock (Lockpin)"
+		return "[E] Locked — Needs Lockpin"
+	if col is Node and col.name == "openz_all_locks":
+		var md: Node = col.get_parent()
+		if md:
+			var has_mkey: bool = md.get("monster_key") == true
+			var has_plank: bool = md.get("wooden_hammer") == true
+			if has_mkey and has_plank:
+				return "[E] Open Main Door & Escape!"
+			var missing: PackedStringArray = PackedStringArray()
+			if not has_plank:
+				missing.append("Hammer (Plank)")
+			if not has_mkey:
+				missing.append("Master Key")
+			return "[E] Main Door — Needs: %s" % " + ".join(missing)
+	return "[E] Open / Close"
 
 
 func get_stealth_status() -> String:
@@ -387,25 +441,22 @@ func _process(delta):
 	if reach_col is pickable:
 		ws_bt.visible = true
 		rc_bt.visible = false
-		label.text = "[F] to PICK UP"
+		label.text = "[F] Pick Up %s" % _pretty_item_name(reach_col.name)
 	elif ship_hit:
+		var ship_col = for_ship.get_collider()
 		ws_bt.visible = false
 		rc_bt.visible = true
-		if picked and is_instance_valid(detected) and detected.name == "need_gear":
-			label.text = "[E] to ESCAPE BY BOAT"
-			if want_interact:
-				Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-				get_tree().change_scene_to_file("res://scenes/game_over.tscn")
+		if ship_col and ship_col.has_method("get_prompt"):
+			label.text = ship_col.get_prompt(self)
+			if want_interact and ship_col.has_method("interact_boat"):
+				ship_col.interact_boat(self)
 				return
 		else:
-			label.text = "[E] BOAT (NEED BOAT GEAR)"
-			if want_interact:
-				_play_sfx("door_locked", -2.0)
-				_show_hint("NEED BOAT GEAR to ESCAPE")
+			label.text = "[E] Boat"
 	elif _can_interact_collider(interact_col):
 		ws_bt.visible = false
 		rc_bt.visible = true
-		label.text = "[E] to INTERACT"
+		label.text = _get_interact_prompt(interact_col)
 		if want_interact:
 			var needs_key = interact_col.get("keyreq") == true
 			var needs_beat = interact_col.get("beatreq") == true
@@ -419,7 +470,7 @@ func _process(delta):
 					timer.start()
 				else:
 					_play_sfx("door_locked", -2.0, randf_range(0.95, 1.05))
-					_show_hint("NEED a KEY to OPEN")
+					_show_hint("LOCKED! Needs %s" % _pretty_item_name(req_key))
 			elif needs_beat:
 				var req_beat = str(interact_col.get("beatname"))
 				if picked and is_instance_valid(detected) and detected.name == req_beat:
@@ -430,7 +481,7 @@ func _process(delta):
 					_notify_enemy_progress(0.18)
 				else:
 					_play_sfx("door_locked", -2.0, randf_range(0.95, 1.05))
-					_show_hint("NEED a HAMMER to OPEN")
+					_show_hint("BARRICADED! Needs %s" % _pretty_item_name(req_beat))
 			elif needs_pin:
 				if picked and is_instance_valid(detected) and detected.name == "lockpin":
 					pending_unlock_target = interact_col
@@ -438,7 +489,7 @@ func _process(delta):
 					timer.start()
 				else:
 					_play_sfx("door_locked", -2.0, randf_range(0.95, 1.05))
-					_show_hint("NEED a LOCKPIN to OPEN")
+					_show_hint("LOCKED! Needs Lockpin")
 			else:
 				interact_col.interact()
 				_play_sfx("door_open", -3.5, randf_range(0.90, 1.10))

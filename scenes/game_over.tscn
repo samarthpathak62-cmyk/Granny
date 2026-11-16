@@ -40,7 +40,8 @@ grow_vertical = 2
 layout_mode = 2
 theme_override_fonts/font = ExtResource("1_0w2i7")
 theme_override_font_sizes/font_size = 100
-text = " you  have  escaped  the  house"
+text = "YOU ESCAPED ROBERT THE CLOWN!"
+horizontal_alignment = 1
 
 [node name="main_menu" type="Button" parent="."]
 layout_mode = 1

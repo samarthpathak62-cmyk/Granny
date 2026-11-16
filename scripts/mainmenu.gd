@@ -55,7 +55,7 @@ func _build_mode_selector_ui() -> void:
 	menu.offset_bottom = -20.0
 
 	title_lbl = Label.new()
-	title_lbl.text = "ESCAPE THE HOUSE"
+	title_lbl.text = "ROBERT THE CLOWN"
 	title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	if horror_font:
 		title_lbl.add_theme_font_override("font", horror_font)
