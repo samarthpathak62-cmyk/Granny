@@ -92,8 +92,7 @@ func _on_body_entered(body: Node3D) -> void:
 
 	if has_node("/root/AudioManager"):
 		var am = get_node("/root/AudioManager")
-		am.play_sfx("plank_break", 1.5, 1.15)
-		am.play_sfx("door_locked", 1.0, 0.85)
+		am.play_sfx("trap_snap", 1.5, 1.0)
 
 	if body.has_method("trap_player"):
 		body.trap_player(3.5)

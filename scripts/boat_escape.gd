@@ -161,7 +161,8 @@ func interact_boat(player: Node) -> void:
 		tw.tween_property(lever_pivot, "rotation_degrees:x", 35.0, 0.32).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	if has_node("/root/AudioManager"):
 		var am = get_node("/root/AudioManager")
-		am.play_sfx("unlock", 0.0, 0.85)
+		am.play_sfx("unlock", 0.0, 0.9)
+		am.play_sfx("boat_escape", -2.0, 1.0)
 		am.play_sfx("victory", -2.0, 1.0)
 	if player and player.has_method("_show_hint"):
 		player._show_hint("BOAT STARTED! Escaping...", 2.0)

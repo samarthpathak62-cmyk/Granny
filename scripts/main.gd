@@ -41,6 +41,7 @@ const EscapeNoteUIScript = preload("res://scripts/escape_note_ui.gd")
 var note_layer: CanvasLayer = null
 var note_open: bool = false
 var note_cooldown: float = 0.0
+var ambient_creak_timer: float = 24.0
 
 
 func _ready() -> void:
@@ -67,6 +68,11 @@ func _ready() -> void:
 			player_node.play_wakeup_animation()
 	if enemy_node:
 		enemy_spawn_transform = enemy_node.global_transform
+
+	if has_node("/root/AudioManager"):
+		var am = get_node("/root/AudioManager")
+		am.set_chase_intensity(0.0)
+		am.start_ambience(-10.0)
 
 	_apply_lighting_mode()
 	_build_psx_postprocess()
@@ -479,7 +485,7 @@ func open_escape_note() -> void:
 	get_tree().paused = true
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	if has_node("/root/AudioManager"):
-		get_node("/root/AudioManager").play_sfx("ui_click", -3.0, 0.95)
+		get_node("/root/AudioManager").play_sfx("note_open", -2.0, 1.0)
 
 
 func close_escape_note() -> void:
@@ -494,7 +500,7 @@ func close_escape_note() -> void:
 	else:
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 	if has_node("/root/AudioManager"):
-		get_node("/root/AudioManager").play_sfx("ui_click", -4.0, 1.05)
+		get_node("/root/AudioManager").play_sfx("note_close", -3.0, 1.0)
 
 
 func trigger_blood_flash(strength: float = 0.8) -> void:
@@ -523,6 +529,14 @@ func _show_day_intro(day_num: int, subtitle: String) -> void:
 func _process(delta: float) -> void:
 	if note_cooldown > 0.0:
 		note_cooldown = maxf(note_cooldown - delta, 0.0)
+	ambient_creak_timer -= delta
+	if ambient_creak_timer <= 0.0:
+		ambient_creak_timer = randf_range(26.0, 44.0)
+		if player_node and is_instance_valid(player_node) and has_node("/root/AudioManager"):
+			var ang: float = randf_range(0.0, TAU)
+			var dist: float = randf_range(7.0, 14.0)
+			var creak_pos: Vector3 = player_node.global_position + Vector3(cos(ang) * dist, randf_range(-1.0, 2.5), sin(ang) * dist)
+			get_node("/root/AudioManager").play_sfx_3d("house_creak", creak_pos, -8.0, randf_range(0.85, 1.08), 22.0)
 	var chase_val: float = 0.0
 	if has_node("/root/AudioManager"):
 		chase_val = float(get_node("/root/AudioManager").chase_intensity)

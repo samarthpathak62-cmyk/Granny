@@ -27,7 +27,7 @@ func _ready():
 	if has_node("/root/AudioManager"):
 		var am = get_node("/root/AudioManager")
 		am.set_chase_intensity(0.0)
-		am.start_ambience(-10.0)
+		am.start_menu_music(-10.0)
 
 	menu.visible = true
 	options.visible = false
@@ -35,6 +35,7 @@ func _ready():
 	graphics.visible = false
 
 	_build_mode_selector_ui()
+	_connect_button_hover_sfx(self)
 
 	if fullscreen_check:
 		fullscreen_check.button_pressed = DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
@@ -262,6 +263,20 @@ func _process(_delta):
 func _play_click() -> void:
 	if has_node("/root/AudioManager"):
 		get_node("/root/AudioManager").play_sfx("ui_click", -3.0)
+
+
+func _play_hover() -> void:
+	if has_node("/root/AudioManager"):
+		get_node("/root/AudioManager").play_sfx("ui_hover", -10.0, 1.0)
+
+
+func _connect_button_hover_sfx(root: Node) -> void:
+	for child in root.get_children():
+		if child is BaseButton:
+			var btn: BaseButton = child as BaseButton
+			if not btn.mouse_entered.is_connected(_play_hover):
+				btn.mouse_entered.connect(_play_hover)
+		_connect_button_hover_sfx(child)
 
 
 func _on_new_game_pressed():
