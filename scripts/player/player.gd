@@ -7,7 +7,7 @@ const JUMP_VELOCITY = 4.8
 const SENSITIVITY = 0.004
 const TOUCH_SENSITIVITY = 0.006
 const CROUCH_SPEED = 2.4
-const CROUCH_DEPTH = 0.8
+const CROUCH_DEPTH = 0.65
 const STAND_HEIGHT = 1.8
 
 # stamina variables
@@ -95,6 +95,8 @@ var mobile_interact_pressed := false
 
 func _ready():
 	add_to_group("player")
+	floor_max_angle = deg_to_rad(55.0)
+	floor_snap_length = 0.2
 	camera_base_pos = camera.transform.origin
 	standing_colide_shape.disabled = false
 	crouch_colide_shape.disabled = true

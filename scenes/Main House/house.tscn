@@ -1,4 +1,4 @@
-[gd_scene load_steps=598 format=3 uid="uid://ciwlsmuphph4k"]
+[gd_scene load_steps=600 format=3 uid="uid://ciwlsmuphph4k"]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_lvx2l"]
 [ext_resource type="Texture2D" uid="uid://by206lfxfkg1k" path="res://Model_static/house/house02-4167be13566ed59214ff21c0756662d0_rooftop_0009_color_1k.png" id="1_wbga5"]
@@ -1769,7 +1769,13 @@ shadow_mesh = SubResource("ArrayMesh_fy8by")
 size = Vector3(10.1134, 2.00297, 2.3508)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_gtj30"]
-size = Vector3(8.94392, 2.00297, 1.29637)
+size = Vector3(6.9765, 2.00297, 1.29637)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_gtj31"]
+size = Vector3(1.96742, 2.00297, 0.213815)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_gtj32"]
+size = Vector3(1.96742, 2.00297, 0.876635)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_sqrq5"]
 size = Vector3(7.16039, 2.00297, 0.393096)
@@ -6173,8 +6179,16 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.509105, 0, 0.00952733)
 shape = SubResource("BoxShape3D_q3uhl")
 
 [node name="CollisionShape3D3" type="CollisionShape3D" parent="house02/NavigationRegion3D/RootNode/floor 1/01_floor/StaticBody3D"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 0.999999, 0.00733876, 0, 2.12603)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 0.999999, 0.991049, 0, 2.12603)
 shape = SubResource("BoxShape3D_gtj30")
+
+[node name="CollisionShape3D3_west_south" type="CollisionShape3D" parent="house02/NavigationRegion3D/RootNode/floor 1/01_floor/StaticBody3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 0.999999, -3.48091, 0, 1.58475)
+shape = SubResource("BoxShape3D_gtj31")
+
+[node name="CollisionShape3D3_west_north" type="CollisionShape3D" parent="house02/NavigationRegion3D/RootNode/floor 1/01_floor/StaticBody3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 0.999999, -3.48091, 0, 2.3359)
+shape = SubResource("BoxShape3D_gtj32")
 
 [node name="CollisionShape3D4" type="CollisionShape3D" parent="house02/NavigationRegion3D/RootNode/floor 1/01_floor/StaticBody3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 0.999999, -2.09321, 0, 1.33462)

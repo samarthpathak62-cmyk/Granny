@@ -2,9 +2,11 @@ extends CharacterBody3D
 
 const ATTACK_RANGE: float = 1.5
 const ATTACK_VERTICAL_RANGE: float = 1.65
-const DOOR_CHECK_INTERVAL: float = 0.14
-const STUCK_CHECK_INTERVAL: float = 0.65
+const DOOR_CHECK_INTERVAL: float = 0.12
+const STUCK_CHECK_INTERVAL: float = 0.55
 const STUCK_MIN_DISTANCE: float = 0.18
+const OSC_CHECK_INTERVAL: float = 1.65
+const OSC_MIN_DISTANCE: float = 0.55
 const GRAVITY: float = 9.8
 const BEAR_TRAP_SCRIPT = preload("res://scripts/bear_trap.gd")
 
@@ -44,10 +46,13 @@ var has_prev_player_pos: bool = false
 
 # Doors & obstacle avoidance
 var door_memory: Dictionary = {}
+var ignored_door_bodies: Dictionary = {}
 var blocked_doors: Array[Dictionary] = []
 var door_check_timer: float = 0.0
 var stuck_check_timer: float = 0.0
 var last_stuck_check_pos: Vector3 = Vector3.ZERO
+var osc_check_timer: float = 0.0
+var osc_anchor_pos: Vector3 = Vector3.ZERO
 var stuck_count: int = 0
 var sidestep_dir: Vector3 = Vector3.ZERO
 var sidestep_timer: float = 0.0
@@ -65,6 +70,10 @@ var trap_drop_interval: float = 36.0
 func _ready() -> void:
 	add_to_group("enemy")
 	randomize()
+	floor_max_angle = deg_to_rad(52.0)
+	floor_snap_length = 0.25
+	wall_min_slide_angle = deg_to_rad(5.0)
+
 	player = get_node_or_null(player_path)
 	if player == null:
 		player = get_tree().get_first_node_in_group("player")
@@ -72,9 +81,10 @@ func _ready() -> void:
 		anim_tree.active = true
 		state_machine = anim_tree.get("parameters/playback")
 	if nav_agent:
-		nav_agent.path_desired_distance = 0.70
-		nav_agent.target_desired_distance = 0.90
+		nav_agent.path_desired_distance = 0.65
+		nav_agent.target_desired_distance = 0.85
 	last_stuck_check_pos = global_position
+	osc_anchor_pos = global_position
 	_load_difficulty_brain()
 	call_deferred("_init_ai")
 
@@ -140,21 +150,42 @@ func _get_floor_band(y_val: float) -> int:
 	return 3      # Attic / Upper Floor
 
 
+func _is_walkable_stand_point(pos: Vector3) -> bool:
+	if pos.y < -2.2 or pos.y > 16.2:
+		return false
+	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+	var q: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(
+		pos + Vector3(0.0, 0.25, 0.0),
+		pos + Vector3(0.0, 1.92, 0.0),
+		1
+	)
+	q.exclude = [get_rid()]
+	var hit: Dictionary = space_state.intersect_ray(q)
+	if not hit.is_empty():
+		var hit_pos: Vector3 = hit["position"]
+		# Exclude crouch tunnels / crawlspaces (< 1.80 m vertical clearance)
+		if (hit_pos.y - pos.y) < 1.80:
+			return false
+	return true
+
+
 func _is_bridge_clear_of_walls(a: Vector3, b: Vector3) -> bool:
 	if absf(a.y - b.y) > 2.35:
 		return false
 	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
-	var p1: Vector3 = a + Vector3(0.0, 0.95, 0.0)
-	var p2: Vector3 = b + Vector3(0.0, 0.95, 0.0)
-	var q: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(p1, p2)
-	q.exclude = [get_rid()]
-	q.collision_mask = 1
-	var hit: Dictionary = space_state.intersect_ray(q)
-	if hit.is_empty():
-		return true
-	# Allow bridging through an openable door panel, reject solid house walls!
-	var col = hit.get("collider")
-	return _resolve_door_interact_node(col) != null
+	for h in [0.45, 1.15]:
+		var p1: Vector3 = a + Vector3(0.0, h, 0.0)
+		var p2: Vector3 = b + Vector3(0.0, h, 0.0)
+		var q: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(p1, p2, 1)
+		q.exclude = [get_rid()]
+		var hit: Dictionary = space_state.intersect_ray(q)
+		if not hit.is_empty():
+			var col = hit.get("collider")
+			if not _is_passage_door_collider(col):
+				var normal_val = hit.get("normal")
+				if not (normal_val is Vector3 and (normal_val as Vector3).y > 0.45):
+					return false
+	return true
 
 
 func _bridge_navmesh_islands() -> void:
@@ -169,13 +200,31 @@ func _bridge_navmesh_islands() -> void:
 
 	var adj: Dictionary = {}
 	var coord_map: Dictionary = {}
+	var poly_samples_by_key: Dictionary = {}
+
 	for i in range(poly_count):
 		var poly: PackedInt32Array = nav_mesh.get_polygon(i)
-		for k in range(poly.size()):
-			var v1: Vector3 = nav_region.to_global(verts[poly[k]])
-			var v2: Vector3 = nav_region.to_global(verts[poly[(k + 1) % poly.size()]])
-			if v1.y > 16.5 or v2.y > 16.5:
-				continue
+		if poly.size() < 3:
+			continue
+		var world_poly: Array[Vector3] = []
+		var centroid: Vector3 = Vector3.ZERO
+		var out_of_bounds: bool = false
+		for idx_v in poly:
+			var wv: Vector3 = nav_region.to_global(verts[idx_v])
+			if wv.y < -2.2 or wv.y > 16.2:
+				out_of_bounds = true
+				break
+			world_poly.append(wv)
+			centroid += wv
+		if out_of_bounds:
+			continue
+		centroid /= float(world_poly.size())
+		if not _is_walkable_stand_point(centroid):
+			continue
+
+		for k in range(world_poly.size()):
+			var v1: Vector3 = world_poly[k]
+			var v2: Vector3 = world_poly[(k + 1) % world_poly.size()]
 			var key1: Vector3i = Vector3i(roundi(v1.x * 10.0), roundi(v1.y * 10.0), roundi(v1.z * 10.0))
 			var key2: Vector3i = Vector3i(roundi(v2.x * 10.0), roundi(v2.y * 10.0), roundi(v2.z * 10.0))
 			coord_map[key1] = v1
@@ -186,6 +235,15 @@ func _bridge_navmesh_islands() -> void:
 				adj[key2] = []
 			(adj[key1] as Array).append(key2)
 			(adj[key2] as Array).append(key1)
+
+			if not poly_samples_by_key.has(key1):
+				poly_samples_by_key[key1] = []
+			var edge_len: float = v1.distance_to(v2)
+			var steps: int = maxi(2, int(ceil(edge_len / 1.4)))
+			for s in range(1, steps):
+				var sample_pt: Vector3 = v1.lerp(v2, float(s) / float(steps))
+				(poly_samples_by_key[key1] as Array).append(sample_pt)
+			(poly_samples_by_key[key1] as Array).append(centroid)
 
 	var visited: Dictionary = {}
 	var islands: Array = []
@@ -198,28 +256,51 @@ func _bridge_navmesh_islands() -> void:
 		while not queue.is_empty():
 			var cur = queue.pop_front()
 			comp.append(coord_map[cur])
+			if poly_samples_by_key.has(cur):
+				for sp in poly_samples_by_key[cur]:
+					comp.append(sp as Vector3)
 			for nb in adj[cur]:
 				if not visited.has(nb):
 					visited[nb] = true
 					queue.append(nb)
-		islands.append(comp)
+		# Deduplicate samples in island to ~0.75 m grid for fast matching
+		var dedup: Dictionary = {}
+		var clean_comp: Array[Vector3] = []
+		for pt in comp:
+			var dk: Vector3i = Vector3i(roundi(pt.x * 1.33), roundi(pt.y * 2.0), roundi(pt.z * 1.33))
+			if not dedup.has(dk):
+				dedup[dk] = true
+				clean_comp.append(pt)
+		islands.append(clean_comp)
 
 	if islands.size() <= 1:
 		return
 
-	islands.sort_custom(func(a, b) -> bool: return a.size() > b.size())
+	# Pick the island closest to Robert's spawn (or largest) as the root component
+	var root_idx: int = 0
+	var best_root_score: float = -1.0
+	for idx in range(islands.size()):
+		var isl: Array = islands[idx]
+		var min_d: float = 9999.0
+		for p in isl:
+			min_d = minf(min_d, (p as Vector3).distance_to(global_position))
+		var score: float = float(isl.size()) + (200.0 if min_d < 3.0 else 0.0)
+		if score > best_root_score:
+			best_root_score = score
+			root_idx = idx
 
 	var connected_pts: Array[Vector3] = []
-	for p in islands[0]:
+	for p in islands[root_idx]:
 		connected_pts.append(p as Vector3)
 
 	var pending_islands: Array = []
-	for idx in range(1, islands.size()):
-		pending_islands.append(islands[idx])
+	for idx in range(islands.size()):
+		if idx != root_idx:
+			pending_islands.append(islands[idx])
 
 	var made_progress: bool = true
 	var link_count: int = 0
-	while made_progress and not pending_islands.is_empty() and link_count < 24:
+	while made_progress and not pending_islands.is_empty() and link_count < 36:
 		made_progress = false
 		for idx in range(pending_islands.size() - 1, -1, -1):
 			var isl: Array = pending_islands[idx]
@@ -229,12 +310,14 @@ func _bridge_navmesh_islands() -> void:
 			for pa in isl:
 				var pva: Vector3 = pa as Vector3
 				for pb in connected_pts:
+					if absf(pva.y - pb.y) > 2.35:
+						continue
 					var d: float = pva.distance_to(pb)
-					if d < best_dist and d <= 2.85 and _is_bridge_clear_of_walls(pva, pb):
+					if d < best_dist and d <= 3.35 and _is_bridge_clear_of_walls(pva, pb):
 						best_dist = d
 						best_a = pva
 						best_b = pb
-			if best_dist <= 2.85:
+			if best_dist <= 3.35:
 				var link := NavigationLink3D.new()
 				link.bidirectional = true
 				link.navigation_layers = 1
@@ -251,6 +334,57 @@ func _bridge_navmesh_islands() -> void:
 				made_progress = true
 
 
+func _is_actual_passage_door(node: Node) -> bool:
+	if node == null:
+		return false
+	var nname: String = node.name.to_lower()
+	# Exclude cabinets, wardrobes, crawl-vents, and main_door locks from passage-door opening
+	if nname in ["l_door", "r_door", "m_door", "need_monster_key", "wood_hammer", "openz_all_locks"]:
+		return false
+	if nname.begins_with("wardrobe") or nname.begins_with("basement_m_hole"):
+		return false
+	if nname == "door_lock" or nname == "grid_gate" or nname == "base_gf_door":
+		return true
+	var p: Node = node.get_parent()
+	while p != null:
+		if p.name == "DOORS":
+			return true
+		p = p.get_parent()
+	return false
+
+
+func _collect_door_bodies(door_node: Node) -> Array[PhysicsBody3D]:
+	var bodies: Array[PhysicsBody3D] = []
+	var seen: Dictionary = {}
+	var add_b := func(b: PhysicsBody3D):
+		if b != null and is_instance_valid(b) and b.name != "door_holder":
+			var bid: int = b.get_instance_id()
+			if not seen.has(bid):
+				seen[bid] = true
+				bodies.append(b)
+
+	if door_node is PhysicsBody3D:
+		add_b.call(door_node as PhysicsBody3D)
+
+	var door_ref = door_node.get("door")
+	var door_root: Node = door_ref if door_ref is Node else null
+	if door_root == null and door_node.get_parent() is PhysicsBody3D and door_node.get_parent().name != "door_holder":
+		door_root = door_node.get_parent()
+
+	if door_root is PhysicsBody3D:
+		add_b.call(door_root as PhysicsBody3D)
+
+	if door_root != null:
+		for child in door_root.get_children():
+			if child is PhysicsBody3D:
+				add_b.call(child as PhysicsBody3D)
+	for child in door_node.get_children():
+		if child is PhysicsBody3D:
+			add_b.call(child as PhysicsBody3D)
+
+	return bodies
+
+
 func _snapshot_world_doors() -> void:
 	door_memory.clear()
 	var root: Node = get_tree().current_scene
@@ -264,23 +398,53 @@ func _snapshot_world_doors() -> void:
 			if opened_val is bool:
 				var id: int = node.get_instance_id()
 				var pos: Vector3 = (node as Node3D).global_position
-				var door_body: PhysicsBody3D = null
-				var door_ref = node.get("door")
-				if door_ref is PhysicsBody3D:
-					door_body = door_ref as PhysicsBody3D
-				elif node is PhysicsBody3D and node.name != "door_lock":
-					door_body = node as PhysicsBody3D
-				elif node.get_parent() is PhysicsBody3D:
-					door_body = node.get_parent() as PhysicsBody3D
+				var is_passage: bool = _is_actual_passage_door(node)
+				var bodies: Array[PhysicsBody3D] = _collect_door_bodies(node) if is_passage else []
 				door_memory[id] = {
 					"node": node,
-					"door_body": door_body,
+					"bodies": bodies,
+					"is_passage": is_passage,
 					"opened": bool(opened_val),
 					"pos": pos,
 					"ai_ignore_until": 0.0,
 				}
 		for child in node.get_children():
 			stack.append(child)
+
+
+func _inset_away_from_walls(world_pt: Vector3) -> Dictionary:
+	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+	var pt: Vector3 = world_pt
+	for _pass_idx in range(2):
+		var push: Vector3 = Vector3.ZERO
+		var opp_tight: PackedFloat32Array = PackedFloat32Array()
+		opp_tight.resize(8)
+		for i in range(8):
+			var ang: float = float(i) * (TAU / 8.0)
+			var dir: Vector3 = Vector3(cos(ang), 0.0, sin(ang))
+			var min_d: float = 0.72
+			for h in [0.55, 1.25]:
+				var origin: Vector3 = pt + Vector3(0.0, h, 0.0)
+				var q: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, origin + dir * 0.72, 1)
+				q.exclude = [get_rid()]
+				var hit: Dictionary = space_state.intersect_ray(q)
+				if not hit.is_empty():
+					var col = hit.get("collider")
+					if not _is_passage_door_collider(col):
+						var nval = hit.get("normal")
+						if not (nval is Vector3 and (nval as Vector3).y > 0.45):
+							min_d = minf(min_d, origin.distance_to(hit["position"]))
+			opp_tight[i] = min_d
+			if min_d < 0.60:
+				push -= dir * (0.64 - min_d)
+		for i in range(4):
+			if opp_tight[i] < 0.36 and opp_tight[i + 4] < 0.36:
+				return {"valid": false, "pos": pt}
+		if push.length_squared() < 0.0001:
+			break
+		push.y = 0.0
+		pt = closest_nav_point(pt + push)
+	return {"valid": _is_walkable_stand_point(pt), "pos": pt}
 
 
 func _build_patrol_points() -> void:
@@ -292,33 +456,71 @@ func _build_patrol_points() -> void:
 	var nav_map: RID = nav_agent.get_navigation_map()
 	var start_nav: Vector3 = closest_nav_point(global_position)
 	var nav_region := get_parent() as NavigationRegion3D
-	var candidates: Array[Vector3] = []
+	var raw_candidates: Array[Vector3] = []
 
 	if nav_region and nav_region.navigation_mesh:
-		var verts: PackedVector3Array = nav_region.navigation_mesh.get_vertices()
-		for v in verts:
-			var world_v: Vector3 = nav_region.to_global(v)
-			if world_v.y < -4.0 or world_v.y > 16.5:
+		var nav_mesh: NavigationMesh = nav_region.navigation_mesh
+		var verts: PackedVector3Array = nav_mesh.get_vertices()
+		var poly_count: int = nav_mesh.get_polygon_count()
+		for i in range(poly_count):
+			var poly: PackedInt32Array = nav_mesh.get_polygon(i)
+			if poly.size() < 3:
 				continue
-			var too_close: bool = false
-			for p in candidates:
-				if p.distance_to(world_v) < 3.6:
-					too_close = true
+			var centroid: Vector3 = Vector3.ZERO
+			var world_poly: Array[Vector3] = []
+			var valid_y: bool = true
+			for idx_v in poly:
+				var wv: Vector3 = nav_region.to_global(verts[idx_v])
+				if wv.y < -2.2 or wv.y > 16.2:
+					valid_y = false
 					break
-			if not too_close:
-				candidates.append(world_v)
+				world_poly.append(wv)
+				centroid += wv
+			if not valid_y:
+				continue
+			centroid /= float(world_poly.size())
+			raw_candidates.append(centroid)
 
-	for cand in candidates:
+			# Also add interior centroid-to-edge midpoints for large rooms
+			for k in range(world_poly.size()):
+				var edge_mid: Vector3 = (world_poly[k] + world_poly[(k + 1) % world_poly.size()]) * 0.5
+				if centroid.distance_to(edge_mid) > 2.2:
+					raw_candidates.append(centroid.lerp(edge_mid, 0.55))
+
+	var dedup_candidates: Array[Vector3] = []
+	for cand in raw_candidates:
+		var too_close: bool = false
+		for p in dedup_candidates:
+			if p.distance_to(cand) < 3.0 and absf(p.y - cand.y) < 1.5:
+				too_close = true
+				break
+		if not too_close:
+			dedup_candidates.append(cand)
+
+	for cand in dedup_candidates:
 		var snapped: Vector3 = closest_nav_point(cand)
+		if not _is_walkable_stand_point(snapped):
+			continue
+		var inset_res: Dictionary = _inset_away_from_walls(snapped)
+		if not bool(inset_res["valid"]):
+			continue
+		var clean_pt: Vector3 = inset_res["pos"]
 		if nav_map.is_valid():
-			var path: PackedVector3Array = NavigationServer3D.map_get_path(nav_map, start_nav, snapped, true)
+			var path: PackedVector3Array = NavigationServer3D.map_get_path(nav_map, start_nav, clean_pt, true)
 			if path.is_empty():
 				continue
 			var path_end: Vector3 = path[path.size() - 1]
-			if path_end.distance_to(snapped) > 2.2:
+			if path_end.distance_to(clean_pt) > 2.0:
 				continue
-		patrol_points.append(snapped)
-		patrol_floors.append(_get_floor_band(snapped.y))
+		var final_dup: bool = false
+		for existing in patrol_points:
+			if existing.distance_to(clean_pt) < 2.8 and absf(existing.y - clean_pt.y) < 1.5:
+				final_dup = true
+				break
+		if final_dup:
+			continue
+		patrol_points.append(clean_pt)
+		patrol_floors.append(_get_floor_band(clean_pt.y))
 		zone_heat.append(0.1)
 		zone_last_visited.append(0.0)
 
@@ -326,7 +528,7 @@ func _build_patrol_points() -> void:
 		for angle_deg in [0, 60, 120, 180, 240, 300]:
 			var rad: float = deg_to_rad(float(angle_deg))
 			var fallback_pt: Vector3 = closest_nav_point(
-				global_position + Vector3(cos(rad) * 5.5, 0.0, sin(rad) * 5.5)
+				global_position + Vector3(cos(rad) * 4.5, 0.0, sin(rad) * 4.5)
 			)
 			patrol_points.append(fallback_pt)
 			patrol_floors.append(_get_floor_band(fallback_pt.y))
@@ -644,15 +846,43 @@ func compute_chase_intercept_target(fallback_pos: Vector3, factor: float, max_lo
 	return closest_nav_point(predicted)
 
 
-func _temp_ignore_door_body(body: PhysicsBody3D) -> void:
-	if body == null or not is_instance_valid(body):
+func _ignore_door_bodies(bodies: Array, duration: float) -> void:
+	var now: float = Time.get_ticks_msec() * 0.001
+	var until: float = now + duration
+	for b in bodies:
+		if not (b is PhysicsBody3D) or not is_instance_valid(b):
+			continue
+		var body: PhysicsBody3D = b as PhysicsBody3D
+		var bid: int = body.get_instance_id()
+		if not ignored_door_bodies.has(bid):
+			add_collision_exception_with(body)
+			ignored_door_bodies[bid] = {"body": body, "until": until}
+		else:
+			ignored_door_bodies[bid]["until"] = maxf(float(ignored_door_bodies[bid]["until"]), until)
+
+
+func _cleanup_door_exceptions() -> void:
+	if ignored_door_bodies.is_empty():
 		return
-	add_collision_exception_with(body)
-	var t := get_tree().create_timer(1.4)
-	t.timeout.connect(func():
-		if is_instance_valid(self) and is_instance_valid(body):
+	var now: float = Time.get_ticks_msec() * 0.001
+	var to_remove: Array[int] = []
+	for bid in ignored_door_bodies.keys():
+		var entry: Dictionary = ignored_door_bodies[bid]
+		var body: PhysicsBody3D = entry["body"] as PhysicsBody3D
+		if body == null or not is_instance_valid(body) or now >= float(entry["until"]):
+			if body != null and is_instance_valid(body):
+				remove_collision_exception_with(body)
+			to_remove.append(bid)
+	for bid in to_remove:
+		ignored_door_bodies.erase(bid)
+
+
+func _clear_all_door_exceptions() -> void:
+	for bid in ignored_door_bodies.keys():
+		var body: PhysicsBody3D = ignored_door_bodies[bid]["body"] as PhysicsBody3D
+		if body != null and is_instance_valid(body):
 			remove_collision_exception_with(body)
-	)
+	ignored_door_bodies.clear()
 
 
 func _resolve_door_interact_node(col: Object) -> Node:
@@ -670,9 +900,19 @@ func _resolve_door_interact_node(col: Object) -> Node:
 	return null
 
 
-func _open_door_node(door_node: Node, door_body: PhysicsBody3D, fallback_pos: Vector3) -> int:
+func _is_passage_door_collider(col: Object) -> bool:
+	var dnode: Node = _resolve_door_interact_node(col)
+	if dnode == null:
+		return false
+	return _is_actual_passage_door(dnode)
+
+
+func _open_door_node(door_node: Node, hit_body: PhysicsBody3D, fallback_pos: Vector3) -> int:
 	if door_node == null or not is_instance_valid(door_node):
 		return 0
+	if not _is_actual_passage_door(door_node):
+		return 0
+
 	var locked: bool = (door_node.get("keyreq") == true) or (door_node.get("beatreq") == true) or (door_node.get("pinreq") == true)
 	var door_pos: Vector3 = (door_node as Node3D).global_position if door_node is Node3D else fallback_pos
 	if locked:
@@ -680,102 +920,163 @@ func _open_door_node(door_node: Node, door_body: PhysicsBody3D, fallback_pos: Ve
 			_mark_temp_blocked(door_pos, 22.0)
 		return 2
 
+	var cid: int = door_node.get_instance_id()
+	var bodies: Array = []
+	if door_memory.has(cid):
+		bodies = door_memory[cid]["bodies"]
+	else:
+		bodies = _collect_door_bodies(door_node)
+	if hit_body != null and hit_body.name != "door_holder" and not bodies.has(hit_body):
+		bodies.append(hit_body)
+
 	if door_node.get("opened") == false:
-		var cid: int = door_node.get_instance_id()
 		if door_memory.has(cid):
 			door_memory[cid]["opened"] = true
-			door_memory[cid]["ai_ignore_until"] = Time.get_ticks_msec() * 0.001 + 4.5
-		if door_body:
-			_temp_ignore_door_body(door_body)
-		elif door_node.get_parent() is PhysicsBody3D:
-			_temp_ignore_door_body(door_node.get_parent() as PhysicsBody3D)
-		elif door_node is PhysicsBody3D:
-			_temp_ignore_door_body(door_node as PhysicsBody3D)
+			door_memory[cid]["ai_ignore_until"] = Time.get_ticks_msec() * 0.001 + 5.0
+		_ignore_door_bodies(bodies, 3.0)
 		door_node.interact()
 		if has_node("/root/AudioManager"):
 			get_node("/root/AudioManager").play_sfx_3d("door_open", door_pos, -2.0, randf_range(0.85, 1.05), 18.0)
 		return 1
+
+	# Already open: keep ignoring the swung leaf briefly so capsule never catches on it
+	_ignore_door_bodies(bodies, 1.0)
 	return 0
 
 
-func _check_door_ahead(move_dir: Vector3) -> int:
-	if move_dir.length_squared() < 0.01:
+func _check_door_ahead(move_dir: Vector3, any_direction: bool = false) -> int:
+	if move_dir.length_squared() < 0.01 and not any_direction:
 		return 0
-	var dir_horiz: Vector3 = Vector3(move_dir.x, 0.0, move_dir.z).normalized()
+	var dir_horiz: Vector3 = Vector3(move_dir.x, 0.0, move_dir.z).normalized() if move_dir.length_squared() >= 0.01 else Vector3.ZERO
 
 	for id in door_memory.keys():
 		var info: Dictionary = door_memory[id]
+		if not bool(info.get("is_passage", false)):
+			continue
 		var dnode: Node = info["node"]
-		if not is_instance_valid(dnode) or dnode.get("opened") != false:
+		if not is_instance_valid(dnode):
 			continue
 		var dpos: Vector3 = info["pos"]
 		if absf(dpos.y - global_position.y) > 2.2:
 			continue
 		var to_door: Vector3 = Vector3(dpos.x - global_position.x, 0.0, dpos.z - global_position.z)
 		var dist: float = to_door.length()
-		if dist < 2.15 and dist > 0.05:
-			if dir_horiz.dot(to_door / dist) > 0.15:
-				var dbody: PhysicsBody3D = info.get("door_body") as PhysicsBody3D
-				var res: int = _open_door_node(dnode, dbody, dpos)
-				if res != 0:
-					return res
+		if dnode.get("opened") == false:
+			var max_r: float = 2.4 if any_direction else 2.15
+			if dist < max_r and dist > 0.05:
+				if any_direction or dir_horiz.dot(to_door / dist) > 0.12:
+					var res: int = _open_door_node(dnode, null, dpos)
+					if res != 0:
+						return res
+		elif dist < 1.45:
+			# Prevent snagging on swung-open door leaves inside tight hallways/rooms
+			_ignore_door_bodies(info["bodies"], 0.85)
 
+	if dir_horiz == Vector3.ZERO:
+		return 0
 	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
 	var origin: Vector3 = global_position + Vector3(0.0, 1.1, 0.0)
-	var target: Vector3 = origin + dir_horiz * 1.85
-	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, target)
+	var target: Vector3 = origin + dir_horiz * 1.9
+	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, target, 1 | 4)
 	query.exclude = [get_rid()]
-	query.collision_mask = 1 | 4
 	var hit: Dictionary = space_state.intersect_ray(query)
 	if hit.is_empty():
 		return 0
 	var col = hit.get("collider")
 	var door_node: Node = _resolve_door_interact_node(col)
-	if door_node == null:
+	if door_node == null or not _is_actual_passage_door(door_node):
 		return 0
 	var hit_body: PhysicsBody3D = col as PhysicsBody3D
 	return _open_door_node(door_node, hit_body, target)
 
 
+func _cast_wall_clearance(space_state: PhysicsDirectSpaceState3D, dir: Vector3, max_len: float) -> Dictionary:
+	var min_dist: float = max_len
+	var hit_normal: Vector3 = Vector3.ZERO
+	var blocked: bool = false
+	for h in [0.45, 1.15]:
+		var origin: Vector3 = global_position + Vector3(0.0, h, 0.0)
+		var q: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, origin + dir * max_len, 1)
+		q.exclude = [get_rid()]
+		var hit: Dictionary = space_state.intersect_ray(q)
+		if hit.is_empty():
+			continue
+		var col = hit.get("collider")
+		if _is_passage_door_collider(col):
+			continue
+		var nval = hit.get("normal")
+		if nval is Vector3 and (nval as Vector3).y > 0.45:
+			continue
+		var d: float = origin.distance_to(hit["position"])
+		if d < min_dist:
+			min_dist = d
+			hit_normal = nval if nval is Vector3 else Vector3.ZERO
+			blocked = true
+	return {"blocked": blocked, "dist": min_dist, "normal": hit_normal}
+
+
 func _steer_around_walls(desired_dir: Vector3) -> Vector3:
 	if desired_dir.length_squared() < 0.001:
 		return desired_dir
-	var dir: Vector3 = desired_dir.normalized()
+	var dir: Vector3 = Vector3(desired_dir.x, 0.0, desired_dir.z).normalized()
 	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
-	var origin: Vector3 = global_position + Vector3(0.0, 0.95, 0.0)
 
-	var left_dir: Vector3 = dir.rotated(Vector3.UP, deg_to_rad(36.0))
-	var right_dir: Vector3 = dir.rotated(Vector3.UP, deg_to_rad(-36.0))
+	var center_res: Dictionary = _cast_wall_clearance(space_state, dir, 0.85)
+	var left_30: Vector3 = dir.rotated(Vector3.UP, deg_to_rad(32.0))
+	var right_30: Vector3 = dir.rotated(Vector3.UP, deg_to_rad(-32.0))
+	var left_res: Dictionary = _cast_wall_clearance(space_state, left_30, 0.90)
+	var right_res: Dictionary = _cast_wall_clearance(space_state, right_30, 0.90)
 
-	var hit_center: bool = _is_solid_wall_hit(space_state, origin, dir, 0.72)
-	var hit_left: bool = _is_solid_wall_hit(space_state, origin, left_dir, 0.85)
-	var hit_right: bool = _is_solid_wall_hit(space_state, origin, right_dir, 0.85)
+	if not bool(center_res["blocked"]) and not bool(left_res["blocked"]) and not bool(right_res["blocked"]):
+		return dir
 
-	if hit_left and not hit_right:
-		return (dir + right_dir * 0.85).normalized()
-	if hit_right and not hit_left:
-		return (dir + left_dir * 0.85).normalized()
-	if hit_center:
-		if not hit_left and not hit_right:
-			return left_dir
+	# Score fan directions by open clearance + alignment with desired_dir
+	var best_dir: Vector3 = dir
+	var best_score: float = -1000.0
+	for deg in [0.0, 32.0, -32.0, 65.0, -65.0, 95.0, -95.0]:
+		var cand: Vector3 = dir.rotated(Vector3.UP, deg_to_rad(deg))
+		var cres: Dictionary = _cast_wall_clearance(space_state, cand, 1.35)
+		var clearance: float = float(cres["dist"])
+		if clearance < 0.55:
+			continue
+		var align: float = cand.dot(dir)
+		var score: float = clearance * 1.45 + align * 1.05
+		if score > best_score:
+			best_score = score
+			best_dir = cand
+
+	if best_score > -900.0:
+		return best_dir.normalized()
+
+	# Boxed closely in front: slide tangentially along the wall normal
+	var wn: Vector3 = center_res["normal"] as Vector3
+	wn.y = 0.0
+	if wn.length_squared() > 0.001:
+		wn = wn.normalized()
+		var tangent: Vector3 = dir - wn * dir.dot(wn)
+		if tangent.length_squared() > 0.01:
+			return tangent.normalized()
 	return dir
 
 
-func _is_solid_wall_hit(space_state: PhysicsDirectSpaceState3D, origin: Vector3, dir: Vector3, length: float) -> bool:
-	var q: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, origin + dir * length)
-	q.exclude = [get_rid()]
-	q.collision_mask = 1
-	var hit: Dictionary = space_state.intersect_ray(q)
-	if hit.is_empty():
-		return false
-	var col = hit.get("collider")
-	if _resolve_door_interact_node(col) != null:
-		return false
-	# Ignore gentle stair steps/ramps (surface normal pointing mostly upward)
-	var normal_val = hit.get("normal")
-	if normal_val is Vector3 and (normal_val as Vector3).y > 0.45:
-		return false
-	return true
+func _pick_best_escape_direction(preferred_dir: Vector3) -> Vector3:
+	var space_state: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+	var base: Vector3 = Vector3(preferred_dir.x, 0.0, preferred_dir.z)
+	if base.length_squared() < 0.01:
+		base = -global_transform.basis.z
+		base.y = 0.0
+	base = base.normalized()
+
+	var best_dir: Vector3 = Vector3(-base.z, 0.0, base.x)
+	var best_clearance: float = -1.0
+	for deg in [55.0, -55.0, 90.0, -90.0, 130.0, -130.0, 180.0]:
+		var cand: Vector3 = base.rotated(Vector3.UP, deg_to_rad(deg))
+		var cres: Dictionary = _cast_wall_clearance(space_state, cand, 2.2)
+		var d: float = float(cres["dist"])
+		if d > best_clearance:
+			best_clearance = d
+			best_dir = cand
+	return best_dir.normalized()
 
 
 func _target_in_attack_range() -> bool:
@@ -834,9 +1135,33 @@ func _update_player_velocity(delta: float) -> void:
 	prev_player_pos = player.global_position
 
 
+func _handle_stuck_event(horiz_dir: Vector3, vision: int) -> void:
+	stuck_count += 1
+	if stuck_count == 1:
+		if _check_door_ahead(horiz_dir, true) == 1:
+			stuck_count = 0
+			return
+		sidestep_dir = _pick_best_escape_direction(horiz_dir)
+		sidestep_timer = 0.60
+		if nav_agent:
+			nav_agent.set_target_position(nav_agent.target_position)
+	else:
+		stuck_count = 0
+		_mark_temp_blocked(current_target_pos, 16.0)
+		var is_chasing_now: bool = ai_brain != null and ai_brain.has_method("is_chasing") and ai_brain.is_chasing()
+		if not is_chasing_now or vision != 2:
+			if ai_brain and ai_brain.has_method("on_stuck_abort"):
+				ai_brain.on_stuck_abort()
+		else:
+			sidestep_dir = _pick_best_escape_direction(horiz_dir)
+			sidestep_timer = 0.65
+
+
 func _physics_process(delta: float) -> void:
 	if not ai_ready:
 		return
+
+	_cleanup_door_exceptions()
 
 	for i in range(zone_heat.size()):
 		zone_heat[i] = maxf(zone_heat[i] - delta * 0.015, 0.0)
@@ -920,7 +1245,7 @@ func _physics_process(delta: float) -> void:
 			door_check_timer -= delta
 			if door_check_timer <= 0.0:
 				door_check_timer = DOOR_CHECK_INTERVAL
-				var door_res: int = _check_door_ahead(horiz_dir)
+				var door_res: int = _check_door_ahead(horiz_dir, false)
 				if door_res == 1:
 					if ai_brain and ai_brain.has_method("on_door_breached"):
 						ai_brain.on_door_breached()
@@ -934,6 +1259,9 @@ func _physics_process(delta: float) -> void:
 			velocity.z = 0.0
 
 		stuck_check_timer += delta
+		osc_check_timer += delta
+		var triggered_stuck: bool = false
+
 		if stuck_check_timer >= STUCK_CHECK_INTERVAL:
 			stuck_check_timer = 0.0
 			var moved: float = Vector2(
@@ -942,33 +1270,27 @@ func _physics_process(delta: float) -> void:
 			).length()
 			last_stuck_check_pos = global_position
 			if moved < STUCK_MIN_DISTANCE:
-				stuck_count += 1
-				if stuck_count == 1:
-					if _check_door_ahead(-global_transform.basis.z) == 1:
-						stuck_count = 0
-					else:
-						var side: Vector3 = Vector3(-horiz_dir.z, 0.0, horiz_dir.x)
-						if randf() < 0.5:
-							side = -side
-						sidestep_dir = side.normalized()
-						sidestep_timer = 0.5
-						nav_agent.set_target_position(nav_agent.target_position)
-				else:
-					stuck_count = 0
-					_mark_temp_blocked(current_target_pos, 14.0)
-					var is_chasing_now: bool = ai_brain != null and ai_brain.has_method("is_chasing") and ai_brain.is_chasing()
-					if not is_chasing_now or vision != 2:
-						if ai_brain and ai_brain.has_method("on_stuck_abort"):
-							ai_brain.on_stuck_abort()
-					else:
-						var side2: Vector3 = Vector3(-horiz_dir.z, 0.0, horiz_dir.x)
-						sidestep_dir = (side2 if randf() < 0.5 else -side2).normalized()
-						sidestep_timer = 0.6
+				_handle_stuck_event(horiz_dir, vision)
+				triggered_stuck = true
 			else:
 				stuck_count = 0
+
+		if osc_check_timer >= OSC_CHECK_INTERVAL:
+			osc_check_timer = 0.0
+			var osc_moved: float = Vector2(
+				global_position.x - osc_anchor_pos.x,
+				global_position.z - osc_anchor_pos.z
+			).length()
+			osc_anchor_pos = global_position
+			if not triggered_stuck and osc_moved < OSC_MIN_DISTANCE:
+				_handle_stuck_event(horiz_dir, vision)
 	else:
 		velocity.x = lerp(velocity.x, 0.0, delta * 9.0)
 		velocity.z = lerp(velocity.z, 0.0, delta * 9.0)
+		stuck_check_timer = 0.0
+		osc_check_timer = 0.0
+		last_stuck_check_pos = global_position
+		osc_anchor_pos = global_position
 
 	var clown_horiz_speed: float = Vector2(velocity.x, velocity.z).length()
 	if anim_tree:
@@ -1030,6 +1352,12 @@ func reset_for_new_day(day: int) -> void:
 	velocity = Vector3.ZERO
 	stuck_count = 0
 	sidestep_timer = 0.0
+	stuck_check_timer = 0.0
+	osc_check_timer = 0.0
+	last_stuck_check_pos = global_position
+	osc_anchor_pos = global_position
+	blocked_doors.clear()
+	_clear_all_door_exceptions()
 	if anim_tree:
 		anim_tree.set("parameters/conditions/attack", false)
 		anim_tree.set("parameters/conditions/run", true)

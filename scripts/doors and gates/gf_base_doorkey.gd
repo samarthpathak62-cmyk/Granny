@@ -17,3 +17,5 @@ func _process(delta):
 func interact():
 	if not opened:
 		opened = true
+		keyreq = false
+		collision_layer = 1

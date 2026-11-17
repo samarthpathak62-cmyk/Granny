@@ -1557,7 +1557,8 @@ _data = {
 }
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_mg23c"]
-radius = 0.280017
+radius = 0.27
+height = 1.92
 
 [sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_rxxo6"]
 animation = &"Attack"
@@ -2077,7 +2078,7 @@ libraries = {
 }
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0.0612602)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.96, 0)
 shape = SubResource("CapsuleShape3D_mg23c")
 
 [node name="NavigationAgent3D" type="NavigationAgent3D" parent="."]

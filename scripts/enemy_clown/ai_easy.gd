@@ -68,7 +68,8 @@ func can_hum_now() -> bool:
 
 
 func on_door_breached() -> void:
-	post_breach_state = ai_state
+	if ai_state != AIState.DOOR_BREACH:
+		post_breach_state = ai_state
 	door_breach_timer = DOOR_BREACH_PAUSE
 	_set_state(AIState.DOOR_BREACH)
 
