@@ -399,7 +399,9 @@ func _snapshot_world_doors() -> void:
 				var id: int = node.get_instance_id()
 				var pos: Vector3 = (node as Node3D).global_position
 				var is_passage: bool = _is_actual_passage_door(node)
-				var bodies: Array[PhysicsBody3D] = _collect_door_bodies(node) if is_passage else []
+				var bodies: Array[PhysicsBody3D] = []
+				if is_passage:
+					bodies = _collect_door_bodies(node)
 				door_memory[id] = {
 					"node": node,
 					"bodies": bodies,
@@ -498,10 +500,10 @@ func _build_patrol_points() -> void:
 			dedup_candidates.append(cand)
 
 	for cand in dedup_candidates:
-		var snapped: Vector3 = closest_nav_point(cand)
-		if not _is_walkable_stand_point(snapped):
+		var nav_pt: Vector3 = closest_nav_point(cand)
+		if not _is_walkable_stand_point(nav_pt):
 			continue
-		var inset_res: Dictionary = _inset_away_from_walls(snapped)
+		var inset_res: Dictionary = _inset_away_from_walls(nav_pt)
 		if not bool(inset_res["valid"]):
 			continue
 		var clean_pt: Vector3 = inset_res["pos"]
