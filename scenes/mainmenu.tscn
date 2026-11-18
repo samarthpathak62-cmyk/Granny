@@ -31,28 +31,30 @@ alignment = 1
 [node name="NewGame" type="Button" parent="menu"]
 layout_mode = 2
 theme_override_fonts/font = ExtResource("2_fxwjj")
-theme_override_font_sizes/font_size = 50
-text = "New Game"
-icon_alignment = 1
-expand_icon = true
+theme_override_font_sizes/font_size = 44
+text = "PLAY"
+alignment = 0
 
 [node name="LoadGame" type="Button" parent="menu"]
 layout_mode = 2
 theme_override_fonts/font = ExtResource("2_fxwjj")
-theme_override_font_sizes/font_size = 50
-text = "Load Game"
+theme_override_font_sizes/font_size = 38
+text = "HOUSE SELECT"
+alignment = 0
 
 [node name="options" type="Button" parent="menu"]
 layout_mode = 2
 theme_override_fonts/font = ExtResource("2_fxwjj")
-theme_override_font_sizes/font_size = 50
-text = "Options"
+theme_override_font_sizes/font_size = 38
+text = "OPTIONS"
+alignment = 0
 
 [node name="exit" type="Button" parent="menu"]
 layout_mode = 2
 theme_override_fonts/font = ExtResource("2_fxwjj")
-theme_override_font_sizes/font_size = 50
-text = "Exit"
+theme_override_font_sizes/font_size = 38
+text = "QUIT"
+alignment = 0
 
 [node name="options" type="Control" parent="."]
 visible = false
