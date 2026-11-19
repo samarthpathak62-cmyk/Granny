@@ -10,6 +10,7 @@ var _logo: TextureRect
 var _in_timer: float = 0.0
 var _hold_timer: float = 0.0
 var _out_timer: float = 0.0
+var _transitioning: bool = false
 
 var FADE_SPEED := 1.6
 var FADE_OUT_DELAY := 2.2
@@ -64,5 +65,6 @@ func _process(delta: float) -> void:
 		_fade.color.a = _out_timer
 		if _out_timer >= 1.0 and not is_instance_valid(_fade):
 			pass
-		if _out_timer >= 1.0:
+		if _out_timer >= 1.0 and not _transitioning:
+			_transitioning = true
 			get_tree().change_scene_to_file("res://scenes/mainmenu.tscn")

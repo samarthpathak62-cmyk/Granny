@@ -1,4 +1,4 @@
-[gd_scene load_steps=2 format=3 uid="uid://velcryn_splash_root"]
+[gd_scene load_steps=2 format=3 uid="uid://KTTE629YE3SFN"]
 
 [ext_resource type="Script" path="res://scripts/splash_screen.gd" id="1_splash"]
 
