@@ -7,6 +7,63 @@ func _ready() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	_build_horror_header()
 	_style_buttons()
+	_apply_dark_mode(_get_dark_mode())
+
+
+func _get_dark_mode() -> bool:
+	if has_node("/root/GameSettings"):
+		return bool(get_node("/root/GameSettings").dark_mode)
+	return false
+
+
+func _apply_dark_mode(is_dark: bool) -> void:
+	var scrim := ColorRect.new()
+	scrim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	scrim.color = Color(0.01, 0.008, 0.012, 0.90) if is_dark else Color(0.03, 0.02, 0.03, 0.45)
+	add_child(scrim)
+	move_child(scrim, 0)
+
+	var panel_style := StyleBoxFlat.new()
+	panel_style.set_corner_radius_all(5)
+	panel_style.set_border_width_all(2)
+	panel_style.set_content_margin_all(12)
+	if is_dark:
+		panel_style.bg_color = Color(0.025, 0.02, 0.025, 0.95)
+		panel_style.border_color = Color(0.45, 0.08, 0.08, 0.9)
+	else:
+		panel_style.bg_color = Color(0.08, 0.06, 0.07, 0.92)
+		panel_style.border_color = Color(0.55, 0.14, 0.14, 0.9)
+
+	var vb := get_node_or_null("VBoxContainer")
+	if vb:
+		vb.add_theme_stylebox_override("panel", panel_style)
+
+	var norm := _make_granny_button_style(Color(0.08, 0.06, 0.07, 0.92), Color(0.55, 0.14, 0.14, 0.9))
+	var hov := _make_granny_button_style(Color(0.28, 0.05, 0.05, 0.98), Color(0.95, 0.25, 0.25, 1.0))
+	if is_dark:
+		norm = _make_granny_button_style(Color(0.03, 0.025, 0.03, 0.95), Color(0.24, 0.10, 0.10, 0.9))
+		hov = _make_granny_button_style(Color(0.10, 0.03, 0.03, 0.98), Color(0.70, 0.16, 0.16, 0.98))
+	if vb:
+		for c in vb.get_children():
+			if c is Button:
+				var b: Button = c as Button
+				b.add_theme_stylebox_override("normal", norm)
+				b.add_theme_stylebox_override("hover", hov)
+				b.add_theme_stylebox_override("pressed", hov)
+
+
+func _make_granny_button_style(bg: Color, border: Color) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg
+	sb.border_color = border
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(5)
+	sb.content_margin_left = 24
+	sb.content_margin_right = 20
+	sb.content_margin_top = 12
+	sb.content_margin_bottom = 12
+	return sb
 
 
 func _load_texture_safe(res_path: String) -> Texture2D:

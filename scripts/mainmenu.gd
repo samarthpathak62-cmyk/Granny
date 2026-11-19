@@ -20,6 +20,7 @@ var dark_mode_btn: Button = null
 var mode_desc_label: Label = null
 var dark_desc_label: Label = null
 var submenu_scrim: ColorRect = null
+var scrim_rect_material: ShaderMaterial = null
 
 # Granny-style live 3D horror menu diorama state
 var menu_camera: Camera3D = null
@@ -59,6 +60,7 @@ func _ready() -> void:
 	_style_submenus()
 	_build_mode_selector_ui()
 	_connect_button_hover_sfx(self)
+	_apply_dark_mode_to_ui(_get_dark_mode())
 
 	if fullscreen_check:
 		fullscreen_check.button_pressed = DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
@@ -92,7 +94,14 @@ func _make_box_mesh(size: Vector3, mat: Material) -> MeshInstance3D:
 	return mi
 
 
+func _get_dark_mode() -> bool:
+	if has_node("/root/GameSettings"):
+		return bool(get_node("/root/GameSettings").dark_mode)
+	return false
+
+
 func _build_granny_3d_backdrop() -> void:
+	var is_dark: bool = _get_dark_mode()
 	var vp_container := SubViewportContainer.new()
 	vp_container.name = "HorrorBackdrop3D"
 	vp_container.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -114,14 +123,25 @@ func _build_granny_3d_backdrop() -> void:
 	# Dark horror atmosphere + fog
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.012, 0.010, 0.014)
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.14, 0.12, 0.14)
-	env.ambient_light_energy = 0.42
-	env.fog_enabled = true
-	env.fog_light_color = Color(0.03, 0.02, 0.025)
-	env.fog_light_energy = 0.65
-	env.fog_density = 0.15
+	if is_dark:
+		# Pitch-dark game dark mode: barely visible, only lit by flickering lamp
+		env.background_color = Color(0.005, 0.004, 0.006)
+		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+		env.ambient_light_color = Color(0.05, 0.04, 0.05)
+		env.ambient_light_energy = 0.14
+		env.fog_enabled = true
+		env.fog_light_color = Color(0.015, 0.010, 0.012)
+		env.fog_light_energy = 0.35
+		env.fog_density = 0.28
+	else:
+		env.background_color = Color(0.012, 0.010, 0.014)
+		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+		env.ambient_light_color = Color(0.14, 0.12, 0.14)
+		env.ambient_light_energy = 0.42
+		env.fog_enabled = true
+		env.fog_light_color = Color(0.03, 0.02, 0.025)
+		env.fog_light_energy = 0.65
+		env.fog_density = 0.15
 
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
@@ -304,6 +324,7 @@ void fragment() {
 	var smat := ShaderMaterial.new()
 	smat.shader = scrim_shader
 	scrim_rect.material = smat
+	scrim_rect_material = smat
 	add_child(scrim_rect)
 	move_child(scrim_rect, 1)
 
@@ -401,6 +422,79 @@ func _make_granny_button_style(bg: Color, border: Color, border_w: int = 2) -> S
 	sb.content_margin_top = 10
 	sb.content_margin_bottom = 10
 	return sb
+
+
+func _apply_dark_mode_to_ui(is_dark: bool) -> void:
+	# Granny dark mode: UI panel, scrim and buttons go pitch dark like the in-game dark mode
+	if scrim_rect_material:
+		var mat := scrim_rect_material as ShaderMaterial
+		var scrim_shader := Shader.new()
+		if is_dark:
+			# Pitch-dark scrim: crush everything to near-black with a faint blood-red edge
+			scrim_shader.code = "\"\"\"
+shader_type canvas_item;
+void fragment() {
+	float left_fade = 1.0 - smoothstep(0.10, 0.75, UV.x);
+	float vig = smoothstep(0.28, 1.05, length(UV - vec2(0.5)) * 1.4142);
+	float scan = 0.03 * (0.5 + 0.5 * sin(UV.y * 720.0));
+	float alpha = clamp(left_fade * 0.94 + vig * 0.80 + scan, 0.0, 0.98);
+	vec3 col = mix(vec3(0.010, 0.008, 0.011), vec3(0.03, 0.0, 0.0), vig * 0.3);
+	COLOR = vec4(col, alpha);
+}
+\"\"\"
+		else:
+			scrim_shader.code = "\"\"\"
+shader_type canvas_item;
+void fragment() {
+	float left_fade = 1.0 - smoothstep(0.18, 0.68, UV.x);
+	float vig = smoothstep(0.35, 1.15, length(UV - vec2(0.5)) * 1.4142);
+	float scan = 0.035 * (0.5 + 0.5 * sin(UV.y * 720.0));
+	float alpha = clamp(left_fade * 0.84 + vig * 0.58 + scan, 0.0, 0.94);
+	vec3 col = mix(vec3(0.015, 0.012, 0.016), vec3(0.06, 0.0, 0.0), vig * 0.25);
+	COLOR = vec4(col, alpha);
+}
+\"\"\"
+		mat.shader = scrim_shader
+	if submenu_scrim:
+		submenu_scrim.color = Color(0.008, 0.006, 0.01, 0.92) if is_dark else Color(0.02, 0.015, 0.02, 0.82)
+	if mode_panel:
+		var panel_style := StyleBoxFlat.new()
+		panel_style.set_corner_radius_all(6)
+		panel_style.set_border_width_all(2)
+		panel_style.set_content_margin_all(16)
+		if is_dark:
+			panel_style.bg_color = Color(0.025, 0.02, 0.025, 0.94)
+			panel_style.border_color = Color(0.45, 0.08, 0.08, 0.9)
+		else:
+			panel_style.bg_color = Color(0.05, 0.04, 0.05, 0.86)
+			panel_style.border_color = Color(0.58, 0.12, 0.12, 0.88)
+		mode_panel.add_theme_stylebox_override("panel", panel_style)
+
+	# Restyle main menu buttons darker in dark mode
+	_restyle_menu_buttons_for_dark(is_dark)
+
+
+func _restyle_menu_buttons_for_dark(is_dark: bool) -> void:
+	var normal_play := _make_granny_button_style(Color(0.24, 0.03, 0.03, 0.92), Color(0.85, 0.16, 0.16, 0.95), 2)
+	var hover_play := _make_granny_button_style(Color(0.42, 0.05, 0.05, 0.98), Color(1.0, 0.32, 0.28, 1.0), 2)
+	var normal_std := _make_granny_button_style(Color(0.07, 0.06, 0.07, 0.86), Color(0.38, 0.26, 0.24, 0.85), 1)
+	var hover_std := _make_granny_button_style(Color(0.18, 0.05, 0.05, 0.95), Color(0.82, 0.20, 0.20, 0.95), 2)
+	if is_dark:
+		normal_play = _make_granny_button_style(Color(0.05, 0.02, 0.03, 0.95), Color(0.55, 0.10, 0.10, 0.95), 2)
+		hover_play = _make_granny_button_style(Color(0.14, 0.03, 0.03, 0.98), Color(0.80, 0.18, 0.18, 1.0), 2)
+		normal_std = _make_granny_button_style(Color(0.035, 0.03, 0.035, 0.95), Color(0.22, 0.12, 0.12, 0.9), 1)
+		hover_std = _make_granny_button_style(Color(0.08, 0.03, 0.03, 0.98), Color(0.60, 0.14, 0.14, 0.95), 2)
+	for child in menu.get_children():
+		if child is Button:
+			var btn: Button = child as Button
+			if btn.name == "NewGame":
+				btn.add_theme_stylebox_override("normal", normal_play)
+				btn.add_theme_stylebox_override("hover", hover_play)
+				btn.add_theme_stylebox_override("pressed", hover_play)
+			else:
+				btn.add_theme_stylebox_override("normal", normal_std)
+				btn.add_theme_stylebox_override("hover", hover_std)
+				btn.add_theme_stylebox_override("pressed", hover_std)
 
 
 func _style_main_menu_buttons() -> void:
@@ -582,6 +676,8 @@ func _refresh_mode_ui() -> void:
 		is_dark = bool(gs.dark_mode)
 		desc_text = str(gs.get_difficulty_description())
 
+	_apply_dark_mode_to_ui(is_dark)
+
 	var colors: Array[Color] = [
 		Color(0.45, 0.90, 0.52),
 		Color(0.95, 0.85, 0.42),
@@ -723,7 +819,8 @@ func _on_new_game_pressed():
 	_play_click()
 	get_tree().paused = false
 	Engine.time_scale = 1.0
-	get_tree().change_scene_to_packed(mainhouse)
+	# Granny flow: PLAY -> house select screen -> pick house -> enter game
+	get_tree().change_scene_to_file("res://scenes/load_game_menu.tscn")
 
 
 func _on_options_pressed():

@@ -104,8 +104,8 @@ func on_day_reset(day: int) -> void:
 
 
 func on_hear_noise(noise_pos: Vector3, radius: float, priority: float) -> void:
-	# Normal Granny ignores silent/gentle walking footsteps, reacts to sprinting, drops, unlocks!
-	if priority < 0.78:
+	# Normal Granny hears walking too (priority 0.7) but reacts less; sprinting/drops/unlocks get full attention
+	if priority < 0.45:
 		return
 	var vertical_diff: float = absf(noise_pos.y - clown.global_position.y)
 	var effective_radius: float = radius * 0.85 * (0.65 if vertical_diff > 3.0 else 1.0)
@@ -113,9 +113,12 @@ func on_hear_noise(noise_pos: Vector3, radius: float, priority: float) -> void:
 	if dist > effective_radius:
 		return
 
+	# Walking footsteps build moderate suspicion; louder noises build full suspicion
+	var weight: float = clampf(priority / 0.9, 0.45, 1.2)
+
 	clown.add_heat_near(noise_pos, 0.8 * priority)
 	var closeness: float = 1.0 - (dist / maxf(effective_radius, 0.1))
-	suspicion = clampf(suspicion + (22.0 + 32.0 * closeness) * priority, 0.0, 100.0)
+	suspicion = clampf(suspicion + (22.0 + 32.0 * closeness) * weight, 0.0, 100.0)
 	var nav_target: Vector3 = clown.closest_nav_point(noise_pos)
 
 	if ai_state == AIState.CHASE:
