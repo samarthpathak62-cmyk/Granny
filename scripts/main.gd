@@ -72,7 +72,8 @@ func _ready() -> void:
 	if has_node("/root/AudioManager"):
 		var am = get_node("/root/AudioManager")
 		am.set_chase_intensity(0.0)
-		am.start_ambience(-10.0)
+		# Granny-style intermittent creepy music in-game (replaces continuous sssshh ambience)
+		am.start_intermittent_creepy_music(-9.0)
 
 	_apply_lighting_mode()
 	_build_psx_postprocess()

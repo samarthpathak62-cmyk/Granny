@@ -1,8 +1,9 @@
 extends Node
 
 const SOUND_PATHS: Dictionary = {
-	"menu_music": "res://assets/sounds/menu_music.mp3",
+	"menu_music": "res://assets/sounds/granny_menu_music.wav",
 	"horror_ambience": "res://assets/sounds/horror_ambience.mp3",
+	"granny_creepy_music": "res://assets/sounds/granny_creepy_music.wav",
 	"heartbeat": "res://assets/sounds/heartbeat.mp3",
 	"footstep_player": "res://assets/sounds/footstep_player_0.ogg",
 	"footstep_clown": "res://assets/sounds/footstep_clown_0.ogg",
@@ -62,6 +63,13 @@ var sfx_3d_pool: Array[AudioStreamPlayer3D] = []
 
 var chase_intensity: float = 0.0
 var heartbeat_timer: float = 0.0
+# Intermittent in-game Granny-style creepy music
+var creepy_music_player: AudioStreamPlayer = null
+var creepy_music_timer: float = 0.0
+var creepy_music_active: bool = false
+var creepy_music_min_gap: float = 12.0
+var creepy_music_max_gap: float = 30.0
+var creepy_music_play_time: float = 8.0
 
 
 func _ready() -> void:
@@ -115,6 +123,16 @@ func _setup_players() -> void:
 	if streams.has("heartbeat"):
 		heartbeat_player.stream = streams["heartbeat"] as AudioStream
 	add_child(heartbeat_player)
+
+	# Granny-style intermittent creepy music player (Music bus)
+	creepy_music_player = AudioStreamPlayer.new()
+	creepy_music_player.bus = music_bus
+	creepy_music_player.volume_db = -9.0
+	if streams.has("granny_creepy_music"):
+		creepy_music_player.stream = streams["granny_creepy_music"] as AudioStream
+		_enable_loop(creepy_music_player.stream)
+	creepy_music_player.finished.connect(_on_creepy_music_finished)
+	add_child(creepy_music_player)
 
 	for i in range(12):
 		var p: AudioStreamPlayer = AudioStreamPlayer.new()
@@ -180,6 +198,42 @@ func start_ambience(volume_db: float = -10.0) -> void:
 	_play_music_track("horror_ambience", volume_db)
 
 
+func start_intermittent_creepy_music(volume_db: float = -9.0) -> void:
+	# Granny-style: play creepy music for a while, then silence, then again — bich bich me baje
+	if creepy_music_player == null:
+		return
+	if not streams.has("granny_creepy_music"):
+		return
+	creepy_music_player.volume_db = volume_db
+	creepy_music_timer = randf_range(creepy_music_min_gap * 0.5, creepy_music_max_gap * 0.5)
+	creepy_music_active = false
+
+
+func _on_creepy_music_finished() -> void:
+	if creepy_music_player == null:
+		return
+	if creepy_music_active:
+		creepy_music_active = false
+		creepy_music_timer = randf_range(creepy_music_min_gap, creepy_music_max_gap)
+
+
+func _update_creepy_music(delta: float) -> void:
+	if creepy_music_player == null or creepy_music_player.stream == null:
+		return
+	if creepy_music_active:
+		creepy_music_timer -= delta
+		if creepy_music_timer <= 0.0:
+			creepy_music_timer = 0.0
+			creepy_music_player.play()
+	else:
+		creepy_music_timer -= delta
+		if creepy_music_timer <= 0.0:
+			creepy_music_active = true
+			creepy_music_player.volume_db = -9.0
+			creepy_music_player.play()
+			creepy_music_timer = creepy_music_play_time
+
+
 func set_chase_intensity(intensity: float) -> void:
 	chase_intensity = clampf(intensity, 0.0, 1.0)
 	if ambience_player and current_music_key == "horror_ambience":
@@ -206,6 +260,7 @@ func _pick_stream(sound_name: String) -> AudioStream:
 func _process(delta: float) -> void:
 	if get_tree().paused:
 		return
+	_update_creepy_music(delta)
 	if chase_intensity <= 0.08 or heartbeat_player == null or heartbeat_player.stream == null:
 		heartbeat_timer = 0.0
 		return
