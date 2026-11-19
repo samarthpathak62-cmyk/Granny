@@ -9,6 +9,7 @@ enum Difficulty {
 
 var difficulty: Difficulty = Difficulty.NORMAL
 var dark_mode: bool = false
+var watch_mode: bool = false
 
 
 func get_difficulty_name() -> String:

@@ -523,6 +523,13 @@ func _style_main_menu_buttons() -> void:
 				btn.add_theme_stylebox_override("pressed", hover_play)
 				btn.add_theme_color_override("font_color", Color(0.98, 0.88, 0.82))
 				btn.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0))
+			elif btn.name == "WatchMode":
+				btn.text = "WATCH MODE"
+				btn.add_theme_stylebox_override("normal", normal_play)
+				btn.add_theme_stylebox_override("hover", hover_play)
+				btn.add_theme_stylebox_override("pressed", hover_play)
+				btn.add_theme_color_override("font_color", Color(0.98, 0.88, 0.82))
+				btn.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0))
 			else:
 				if btn.name == "LoadGame":
 					btn.text = "HOUSE SELECT"
@@ -821,6 +828,16 @@ func _on_new_game_pressed():
 	Engine.time_scale = 1.0
 	# Granny flow: PLAY -> house select screen -> pick house -> enter game
 	get_tree().change_scene_to_file("res://scenes/load_game_menu.tscn")
+
+
+func _on_watch_mode_pressed():
+	_play_click()
+	get_tree().paused = false
+	Engine.time_scale = 1.0
+	# Launch straight into the house with Watch Mode (game plays itself, you watch)
+	if has_node("/root/GameSettings"):
+		get_node("/root/GameSettings").watch_mode = true
+	get_tree().change_scene_to_packed(mainhouse)
 
 
 func _on_options_pressed():
