@@ -12,7 +12,7 @@ config_version=5
 
 config/name="Robert The Clown"
 config/version="0.0.2"
-run/main_scene="res://scenes/mainmenu.tscn"
+run/main_scene="res://scenes/splash_screen.tscn"
 run/disable_stdout=false
 run/disable_stderr=false
 config/features=PackedStringArray("4.2", "Mobile")
