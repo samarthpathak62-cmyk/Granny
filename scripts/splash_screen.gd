@@ -22,14 +22,14 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	if _in_timer < 1.0:
-		_in_timer = minimax(_in_timer + delta * FADE_SPEED, 0.0, 1.0)
+		_in_timer = clamp(_in_timer + delta * FADE_SPEED, 0.0, 1.0)
 		_fade.color.a = 1.0 - _in_timer
 		if _in_timer >= 1.0:
 			_hold_timer = 0.0
 	elif _hold_timer < FADE_OUT_DELAY:
 		_hold_timer += delta
 	else:
-		_out_timer = minimax(_out_timer + delta * FADE_SPEED, 0.0, 1.0)
+		_out_timer = clamp(_out_timer + delta * FADE_SPEED, 0.0, 1.0)
 		_fade.color.a = _out_timer
 		if _out_timer >= 1.0 and not _transitioning:
 			_transitioning = true
