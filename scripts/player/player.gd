@@ -92,23 +92,6 @@ var mobile_pick_pressed := false
 var mobile_drop_pressed := false
 var mobile_interact_pressed := false
 
-# ---- Spectator / Watch Mode hooks (game plays itself, you just watch) ----
-var spectator_active: bool = false
-var spectator_dir: Vector3 = Vector3.ZERO
-var spectator_interact_request: bool = false
-var spectator_auto_face: bool = true
-
-func spectator_enable(active: bool) -> void:
-	spectator_active = active
-	if active:
-		set_process_input(false)
-		set_process_unhandled_input(false)
-	else:
-		set_process_input(true)
-		set_process_unhandled_input(true)
-	spectator_dir = Vector3.ZERO
-	spectator_interact_request = false
-
 
 func _ready():
 	add_to_group("player")
@@ -394,10 +377,9 @@ func _process(delta):
 		)
 		return
 
-	var want_pick = (not spectator_active) and (Input.is_action_just_pressed("F") or mobile_pick_pressed)
-	var want_drop = (not spectator_active) and (Input.is_action_just_pressed("G") or mobile_drop_pressed)
-	var want_interact = (Input.is_action_just_pressed("E") or mobile_interact_pressed) or spectator_interact_request
-	spectator_interact_request = false
+	var want_pick = Input.is_action_just_pressed("F") or mobile_pick_pressed
+	var want_drop = Input.is_action_just_pressed("G") or mobile_drop_pressed
+	var want_interact = Input.is_action_just_pressed("E") or mobile_interact_pressed
 	mobile_pick_pressed = false
 	mobile_drop_pressed = false
 	mobile_interact_pressed = false
@@ -599,8 +581,6 @@ func _physics_process(delta):
 	_update_wardrobe_hiding()
 
 	var input_dir = Input.get_vector("left", "right", "up", "down")
-	if spectator_active and spectator_dir.length_squared() > 0.001:
-		input_dir = Vector2(spectator_dir.x, spectator_dir.z)
 	var direction = (head.transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
 
 	# Stamina & Sprint

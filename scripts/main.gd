@@ -6,9 +6,6 @@ const MAX_DAYS: int = 5
 @onready var player_node: Node3D = get_node_or_null("useless/player") as Node3D
 @onready var enemy_node: Node3D = get_node_or_null("house02/NavigationRegion3D/robert_clown") as Node3D
 
-# Watch Mode / Spectator
-var spectator_manager: Node3D = null
-
 var pause: bool = false
 var current_day: int = 1
 var transitioning_day: bool = false
@@ -83,24 +80,10 @@ func _ready() -> void:
 	_build_granny_hud()
 	_build_escape_note_ui()
 	call_deferred("_spawn_escape_notes_on_tables")
-
-	# Watch Mode / Spectator setup
-	_setup_spectator()
 	_show_day_intro(current_day, "%s MODE%s — Check tables for the Escape Note!" % [
 		diff_name,
 		" (DARK)" if dark_mode_enabled else ""
 	])
-
-
-func _setup_spectator() -> void:
-	spectator_manager = load("res://scripts/spectator_manager.gd").new() as Node3D
-	add_child(spectator_manager)
-	var watch_on: bool = false
-	if has_node("/root/GameSettings"):
-		watch_on = bool(get_node("/root/GameSettings").watch_mode)
-		get_node("/root/GameSettings").watch_mode = false
-	if watch_on:
-		spectator_manager.activate(true)
 
 
 func _apply_lighting_mode() -> void:

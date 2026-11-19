@@ -56,13 +56,6 @@ theme_override_font_sizes/font_size = 38
 text = "QUIT"
 alignment = 0
 
-[node name="WatchMode" type="Button" parent="menu"]
-layout_mode = 2
-theme_override_fonts/font = ExtResource("2_fxwjj")
-theme_override_font_sizes/font_size = 38
-text = "WATCH MODE"
-alignment = 0
-
 [node name="options" type="Control" parent="."]
 visible = false
 layout_mode = 1
@@ -290,7 +283,6 @@ text = " back "
 [connection signal="pressed" from="menu/LoadGame" to="." method="_on_load_game_pressed"]
 [connection signal="pressed" from="menu/options" to="." method="_on_options_pressed"]
 [connection signal="pressed" from="menu/exit" to="." method="_on_exit_pressed"]
-[connection signal="pressed" from="menu/WatchMode" to="." method="_on_watch_mode_pressed"]
 [connection signal="pressed" from="options/BackfromOptions" to="." method="_on_backfrom_options_pressed"]
 [connection signal="pressed" from="options/VBoxContainer/graphics" to="." method="_on_graphics_pressed"]
 [connection signal="pressed" from="options/VBoxContainer/Audio" to="." method="_on_audio_pressed"]
