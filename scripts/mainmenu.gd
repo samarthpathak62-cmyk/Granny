@@ -441,7 +441,7 @@ void fragment() {
 	vec3 col = mix(vec3(0.010, 0.008, 0.011), vec3(0.03, 0.0, 0.0), vig * 0.3);
 	COLOR = vec4(col, alpha);
 }
-\"\"\"
+			"""
 		else:
 			scrim_shader.code = """
 shader_type canvas_item;
