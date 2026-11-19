@@ -431,7 +431,7 @@ func _apply_dark_mode_to_ui(is_dark: bool) -> void:
 		var scrim_shader := Shader.new()
 		if is_dark:
 			# Pitch-dark scrim: crush everything to near-black with a faint blood-red edge
-			scrim_shader.code = "\"\"\"
+			scrim_shader.code = """
 shader_type canvas_item;
 void fragment() {
 	float left_fade = 1.0 - smoothstep(0.10, 0.75, UV.x);
@@ -443,7 +443,7 @@ void fragment() {
 }
 \"\"\"
 		else:
-			scrim_shader.code = "\"\"\"
+			scrim_shader.code = """
 shader_type canvas_item;
 void fragment() {
 	float left_fade = 1.0 - smoothstep(0.18, 0.68, UV.x);
@@ -453,7 +453,7 @@ void fragment() {
 	vec3 col = mix(vec3(0.015, 0.012, 0.016), vec3(0.06, 0.0, 0.0), vig * 0.25);
 	COLOR = vec4(col, alpha);
 }
-\"\"\"
+"""
 		mat.shader = scrim_shader
 	if submenu_scrim:
 		submenu_scrim.color = Color(0.008, 0.006, 0.01, 0.92) if is_dark else Color(0.02, 0.015, 0.02, 0.82)
