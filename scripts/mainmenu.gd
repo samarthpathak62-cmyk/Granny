@@ -196,32 +196,30 @@ func _build_granny_3d_backdrop() -> void:
 	back_wall.position = Vector3(0.2, 1.65, -5.6)
 	world_root.add_child(back_wall)
 
-	# Doorway on the LEFT, flush against the left wall (moved from behind Robert)
-	# Left stub connects the left wall to the doorway opening
-	var div_left := _make_box_mesh(Vector3(0.55, 3.4, 0.18), wall_mat)
-	div_left.position = Vector3(-1.98, 1.6, -3.5)
+	# Doorway partition wall with open doorway on right-center behind Robert
+	var div_left := _make_box_mesh(Vector3(2.5, 3.4, 0.18), wall_mat)
+	div_left.position = Vector3(-1.1, 1.6, -3.5)
 	world_root.add_child(div_left)
 
-	# Main wall from the opening's right edge to the right wall
-	var div_right := _make_box_mesh(Vector3(3.65, 3.4, 0.18), wall_mat)
-	div_right.position = Vector3(0.72, 1.6, -3.5)
+	var div_right := _make_box_mesh(Vector3(1.1, 3.4, 0.18), wall_mat)
+	div_right.position = Vector3(2.0, 1.6, -3.5)
 	world_root.add_child(div_right)
 
-	var div_top := _make_box_mesh(Vector3(1.35, 1.0, 0.18), wall_mat)
-	div_top.position = Vector3(-1.53, 2.85, -3.5)
+	var div_top := _make_box_mesh(Vector3(1.5, 1.0, 0.18), wall_mat)
+	div_top.position = Vector3(0.78, 2.85, -3.5)
 	world_root.add_child(div_top)
 
 	var jamb_l := _make_box_mesh(Vector3(0.11, 2.45, 0.24), trim_mat)
-	jamb_l.position = Vector3(-2.12, 1.22, -3.5)
+	jamb_l.position = Vector3(0.12, 1.22, -3.5)
 	world_root.add_child(jamb_l)
 
 	var jamb_r := _make_box_mesh(Vector3(0.11, 2.45, 0.24), trim_mat)
-	jamb_r.position = Vector3(-0.98, 1.22, -3.5)
+	jamb_r.position = Vector3(1.45, 1.22, -3.5)
 	world_root.add_child(jamb_r)
 
-	# Cracked-open wooden door leaf on the LEFT, against the wall behind Robert's left side
+	# Cracked-open wooden door leaf behind Robert
 	var door_leaf := _make_box_mesh(Vector3(1.22, 2.38, 0.08), wood_mat)
-	door_leaf.position = Vector3(-1.55, 1.19, -4.05)
+	door_leaf.position = Vector3(0.95, 1.19, -4.05)
 	door_leaf.rotation_degrees = Vector3(0.0, 38.0, 0.0)
 	world_root.add_child(door_leaf)
 
