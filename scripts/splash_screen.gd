@@ -17,7 +17,6 @@ var FADE_OUT_DELAY := 2.2
 
 func _ready() -> void:
 	# Dark base background
-	set_camera_3d_ignore(true)
 	var bg := ColorRect.new()
 	bg.color = Color(0.02, 0.02, 0.03)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
