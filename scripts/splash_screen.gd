@@ -1,10 +1,12 @@
 extends Control
 ##
-## Startup splash screen — shows the studio name at launch,
+## Startup splash screen — shows the studio logo at launch,
 ## then transitions to the main menu.
 ##
 
 var _fade: ColorRect
+var _logo_rect: TextureRect
+var _fallback_lbl: Label
 
 var _in_timer: float = 0.0
 var _hold_timer: float = 0.0
@@ -17,6 +19,20 @@ var FADE_OUT_DELAY := 2.2
 
 func _ready() -> void:
 	_fade = $Fade
+
+	_logo_rect = $Logo
+	_fallback_lbl = $FallbackText
+
+	# Try to load the logo texture at runtime
+	var logo_tex := load("res://assets/logos/velcryn_studios_logo.png") as Texture2D
+	if logo_tex:
+		_logo_rect.texture = logo_tex
+		_fallback_lbl.visible = false
+	else:
+		# If import failed, show text fallback so splash is never empty
+		_logo_rect.visible = false
+		_fallback_lbl.visible = true
+
 	_fade.color.a = 1.0
 
 
