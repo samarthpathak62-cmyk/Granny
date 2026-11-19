@@ -1,60 +1,35 @@
 extends Control
 ##
-## Startup splash screen — shows the studio logo at launch,
-## then transitions to the main menu.
+## Startup splash screen — shows VELCRYN STUDIOS, then goes to main menu.
 ##
 
-var _fade: ColorRect
-var _logo_rect: TextureRect
-var _fallback_lbl: Label
-
-var _in_timer: float = 0.0
-var _hold_timer: float = 0.0
-var _out_timer: float = 0.0
-var _transitioning: bool = false
-
-var FADE_SPEED := 1.6
-var FADE_OUT_DELAY := 2.2
+var _timer: float = 0.0
+var _show_delay := 0.3
+var _hold_time := 2.5
 
 
 func _ready() -> void:
-	_fade = get_node_or_null("Fade") as ColorRect
-	_logo_rect = get_node_or_null("Logo") as TextureRect
-	_fallback_lbl = get_node_or_null("FallbackText") as Label
+	# Style the title label with horror font
+	var title_lbl := get_node_or_null("Title") as Label
+	if title_lbl:
+		var horror_font := load("res://assets/FONTS/HelpMe.ttf") as Font
+		if horror_font:
+			title_lbl.add_theme_font_override("font", horror_font)
+		title_lbl.add_theme_font_size_override("font_size", 88)
+		title_lbl.add_theme_color_override("font_color", Color(0.88, 0.12, 0.12))
+		title_lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.95))
 
-	if _fade == null or _logo_rect == null or _fallback_lbl == null:
-		push_error("Splash: required nodes not found — check scene tree")
-		return
-
-	# Always show fallback text first — hide it only if logo image loads correctly
-	_fallback_lbl.visible = true
-
-	# Try to load the logo texture at runtime
-	var logo_tex := load("res://assets/logos/velcryn_studios_logo.png") as Texture2D
-	if logo_tex and logo_tex.get_size() > Vector2(1, 1):
-		_logo_rect.texture = logo_tex
-		_fallback_lbl.visible = false
-	else:
-		# Texture is null or empty — keep text fallback visible
-		_logo_rect.visible = false
-		push_warning("Splash: logo texture failed to load — showing text fallback")
-
-	_fade.color.a = 1.0
+	# Style the tagline
+	var tag_lbl := get_node_or_null("Tagline") as Label
+	if tag_lbl:
+		var ui_font := load("res://assets/FONTS/GrimoireOfDeath-Regular.ttf") as Font
+		if ui_font:
+			tag_lbl.add_theme_font_override("font", ui_font)
+		tag_lbl.add_theme_font_size_override("font_size", 26)
+		tag_lbl.add_theme_color_override("font_color", Color(0.72, 0.72, 0.74))
 
 
 func _process(delta: float) -> void:
-	if _in_timer < 1.0:
-		_in_timer = clamp(_in_timer + delta * FADE_SPEED, 0.0, 1.0)
-		if _fade:
-			_fade.color.a = 1.0 - _in_timer
-		if _in_timer >= 1.0:
-			_hold_timer = 0.0
-	elif _hold_timer < FADE_OUT_DELAY:
-		_hold_timer += delta
-	else:
-		_out_timer = clamp(_out_timer + delta * FADE_SPEED, 0.0, 1.0)
-		if _fade:
-			_fade.color.a = _out_timer
-		if _out_timer >= 1.0 and not _transitioning:
-			_transitioning = true
-			get_tree().change_scene_to_file("res://scenes/mainmenu.tscn")
+	_timer += delta
+	if _timer >= _show_delay + _hold_time:
+		get_tree().change_scene_to_file("res://scenes/mainmenu.tscn")
