@@ -1,9 +1,9 @@
 extends Node
 
 const SOUND_PATHS: Dictionary = {
-	"menu_music": "res://assets/sounds/granny_poppy_creepy.wav",
+	"menu_music": "res://assets/sounds/granny_menu_music.wav",
 	"horror_ambience": "res://assets/sounds/horror_ambience.mp3",
-	"granny_creepy_music": "res://assets/sounds/granny_poppy_creepy.wav",
+	"granny_creepy_music": "res://assets/sounds/granny_creepy_music.wav",
 	"heartbeat": "res://assets/sounds/heartbeat.mp3",
 	"footstep_player": "res://assets/sounds/footstep_player_0.ogg",
 	"footstep_clown": "res://assets/sounds/footstep_clown_0.ogg",
