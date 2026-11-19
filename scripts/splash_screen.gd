@@ -5,8 +5,7 @@ extends Control
 ##
 
 var _fade: ColorRect
-var _stud_lbl: Label
-var _tag_lbl: Label
+var _logo: TextureRect
 
 var _in_timer: float = 0.0
 var _hold_timer: float = 0.0
@@ -31,39 +30,18 @@ func _ready() -> void:
 	_fade.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(_fade)
 
-	# Studio name
-	_stud_lbl = Label.new()
-	_stud_lbl.text = "VELCRYN STUDIOS"
-	_stud_lbl.anchor_left = 0.5
-	_stud_lbl.anchor_right = 0.5
-	_stud_lbl.anchor_top = 0.42
-	_stud_lbl.anchor_bottom = 0.58
-	_stud_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_stud_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	var horror_font := load("res://assets/FONTS/HelpMe.ttf") as Font
-	if horror_font:
-		_stud_lbl.add_theme_font_override("font", horror_font)
-	_stud_lbl.add_theme_font_size_override("font_size", 110)
-	_stud_lbl.add_theme_color_override("font_color", Color(0.88, 0.12, 0.12))
-	_stud_lbl.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.95))
-	add_child(_stud_lbl)
-
-	# Tagline under the name
-	_tag_lbl = Label.new()
-	_tag_lbl.text = "PRESENTS"
-	_tag_lbl.anchor_left = 0.5
-	_tag_lbl.anchor_right = 0.5
-	_tag_lbl.anchor_top = 0.60
-	_tag_lbl.anchor_bottom = 0.68
-	_tag_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_tag_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	var ui_font := load("res://assets/FONTS/GrimoireOfDeath-Regular.ttf") as Font
-	if ui_font:
-		_tag_lbl.add_theme_font_override("font", ui_font)
-	_tag_lbl.add_theme_font_size_override("font_size", 32)
-	_tag_lbl.add_theme_color_override("font_color", Color(0.72, 0.72, 0.74))
-	_tag_lbl.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.9))
-	add_child(_tag_lbl)
+	# Studio logo image
+	_logo = TextureRect.new()
+	var logo_tex := load("res://assets/logos/velcryn_studios_logo.png") as Texture2D
+	if logo_tex:
+		_logo.texture = logo_tex
+		_logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		_logo.anchor_left = 0.5
+		_logo.anchor_right = 0.5
+		_logo.anchor_top = 0.32
+		_logo.anchor_bottom = 0.72
+		_logo.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+		add_child(_logo)
 
 	# Keep audio from playing before the menu
 	Engine.time_scale = 1.0
