@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3 uid="uid://KTTE629YE3SFN"]
+[gd_scene load_steps=3 format=3 uid="uid://KTTE629YE3SFN"]
 
 [ext_resource type="Script" path="res://scripts/splash_screen.gd" id="1_splash"]
+[ext_resource type="Texture2D" path="res://assets/logos/velcryn_studios_logo.png" id="2_logo_tex"]
 
 [node name="splash" type="Control"]
 layout_mode = 3
@@ -20,26 +21,24 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0.02, 0.02, 0.03, 1)
 
-[node name="Title" type="Label" parent="."]
+[node name="Fade" type="ColorRect" parent="."]
 layout_mode = 1
-anchor_left = 0.5
-anchor_top = 0.40
-anchor_right = 0.5
-anchor_bottom = 0.58
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-horizontal_alignment = 1
-vertical_alignment = 1
-text = "VELCRYN STUDIOS"
+mouse_filter = 0
+color = Color(0.02, 0.02, 0.03, 1)
 
-[node name="Tagline" type="Label" parent="."]
+[node name="Logo" type="TextureRect" parent="."]
 layout_mode = 1
 anchor_left = 0.5
-anchor_top = 0.60
+anchor_top = 0.32
 anchor_right = 0.5
-anchor_bottom = 0.68
+anchor_bottom = 0.72
 grow_horizontal = 2
 grow_vertical = 2
-horizontal_alignment = 1
-vertical_alignment = 1
-text = "PRESENTS"
+stretch_mode = 5
+expand_mode = 4
+texture = ExtResource("2_logo_tex")

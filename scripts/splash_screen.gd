@@ -1,35 +1,52 @@
 extends Control
 ##
-## Startup splash screen — shows VELCRYN STUDIOS, then goes to main menu.
+## Animated splash screen — VELCRYN STUDIOS logo with fade-in + scale animation,
+## then transitions to the main menu.
 ##
 
-var _timer: float = 0.0
-var _show_delay := 0.3
-var _hold_time := 2.5
+var _fade: ColorRect
+var _logo: TextureRect
+
+var _transitioning: bool = false
+
+var FADE_IN_TIME := 0.6
+var HOLD_TIME := 2.0
+var FADE_OUT_TIME := 0.5
 
 
 func _ready() -> void:
-	# Style the title label with horror font
-	var title_lbl := get_node_or_null("Title") as Label
-	if title_lbl:
-		var horror_font := load("res://assets/FONTS/HelpMe.ttf") as Font
-		if horror_font:
-			title_lbl.add_theme_font_override("font", horror_font)
-		title_lbl.add_theme_font_size_override("font_size", 88)
-		title_lbl.add_theme_color_override("font_color", Color(0.88, 0.12, 0.12))
-		title_lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.95))
+	_fade = get_node_or_null("Fade") as ColorRect
+	_logo = get_node_or_null("Logo") as TextureRect
 
-	# Style the tagline
-	var tag_lbl := get_node_or_null("Tagline") as Label
-	if tag_lbl:
-		var ui_font := load("res://assets/FONTS/GrimoireOfDeath-Regular.ttf") as Font
-		if ui_font:
-			tag_lbl.add_theme_font_override("font", ui_font)
-		tag_lbl.add_theme_font_size_override("font_size", 26)
-		tag_lbl.add_theme_color_override("font_color", Color(0.72, 0.72, 0.74))
-
-
-func _process(delta: float) -> void:
-	_timer += delta
-	if _timer >= _show_delay + _hold_time:
+	if _fade == null or _logo == null:
+		push_error("Splash: missing nodes — check scene")
 		get_tree().change_scene_to_file("res://scenes/mainmenu.tscn")
+		return
+
+	# Start covered
+	_fade.color.a = 1.0
+	# Start small for scale-in animation
+	var start_scale := 0.6
+	_logo.scale = Vector2(start_scale, start_scale)
+	_logo.modulate.a = 0.0
+
+	# Fade in overlay
+	var fade_tween := create_tween()
+	fade_tween.tween_property(_fade, "color:a", 0.0, FADE_IN_TIME)
+
+	# Scale up logo
+	var scale_tween := create_tween()
+	scale_tween.tween_property(_logo, "scale", Vector2(1.0, 1.0), FADE_IN_TIME)
+
+	# Fade in logo alpha
+	var alpha_tween := create_tween()
+	alpha_tween.tween_property(_logo, "modulate:a", 1.0, FADE_IN_TIME)
+
+	# Wait, then fade out and go to main menu
+	var out_tween := create_tween()
+	out_tween.delay(FADE_IN_TIME + HOLD_TIME)
+	out_tween.tween_property(_fade, "color:a", 1.0, FADE_OUT_TIME)
+	out_tween.tween_callback(func():
+		if not _transitioning:
+			_transitioning = true
+			get_tree().change_scene_to_file("res://scenes/mainmenu.tscn"))
