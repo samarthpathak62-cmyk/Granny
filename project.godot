@@ -12,12 +12,12 @@ config_version=5
 
 config/name="Robert The Clown"
 config/version="0.0.2"
-run/main_scene="res://scenes/splash_screen.tscn"
+run/main_scene="res://scenes/mainmenu.tscn"
 run/disable_stdout=false
 run/disable_stderr=false
 config/features=PackedStringArray("4.2", "Mobile")
 boot_splash/bg_color=Color(0, 0, 0, 1)
-boot_splash/image="res://assets/clown_logo.png"
+boot_splash/image="res://assets/logos/velcryn_studios_logo.png"
 config/icon="res://assets/clown_logo.png"
 
 [autoload]
